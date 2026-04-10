@@ -31,28 +31,72 @@ canvas {
 const WORLD_W = 4000;
 const WORLD_H = 4000;
 const TILE = 64;
-const OIL_START = 300;
-const OIL_MAX = 2000;
+const OIL_BASE = 300;
+const OIL_BASE_MAX = 1200;
 const WANTED_THRESHOLDS = [0, 300, 600, 1000, 1500];
-const PLAYER_BASE_SPEED = 4.5;
-const PLAYER_MAX_SPEED_PENALTY = 1.5;
-const FIRE_COOLDOWN_MS = 180;
+const PLAYER_BASE_SPEED = 3.2;
+const FIRE_BASE_COOLDOWN = 0.22;
 const HOMING_COOLDOWN_MS = 600;
-const RIG_COUNT = 8;
+const RIG_COUNT = 10;
 const CAPTURE_RADIUS = 70;
 const CAPTURE_TIME = 2.0;
-const OIL_PER_SECOND = 8;
+const OIL_PER_SECOND = 6;
 const DRONE_DAMAGE = 15;
 const PLANE_DAMAGE = 25;
 const CHOPPER_DAMAGE = 20;
-const BULLET_SPEED = 9;
+const BULLET_BASE_SPEED = 7;
 const HOMING_SPEED = 5;
 const HOMING_TURN = 0.06;
 const MAX_DELTA_TIME = 0.05;
-const ENEMY_SPAWN_DISTANCE = 400;
-const UPGRADE_INTERVAL = 500;
+const ENEMY_SPAWN_DISTANCE = 450;
+const UPGRADE_INTERVAL = 600;
 const DUAL_CANNON_THRESHOLD = 500;
-const HOMING_THRESHOLD = 1000;
+const HOMING_THRESHOLD = 800;
+const MAX_LEVEL = 33;
+const STAT_MAX = 7;
+const PICKUP_RADIUS = 50;
+const MAGNET_RADIUS = 180;
+const COMBO_DECAY = 3.0;
+const STREAK_DECAY = 4.0;
+const BOSS_THRESHOLD = 3;
+const RIG_RECAPTURE_INTERVAL = 30;
+
+/* ===== STAT SYSTEM (diep.io style) ===== */
+const STAT_NAMES = [
+  "Health Regen", "Max Health", "Body Damage", "Bullet Speed",
+  "Bullet Penetration", "Bullet Damage", "Reload", "Movement Speed"
+];
+const STAT_KEYS = [
+  "healthRegen", "maxHealth", "bodyDamage", "bulletSpeed",
+  "bulletPenetration", "bulletDamage", "reload", "moveSpeed"
+];
+const STAT_COLORS = [
+  "#55ff55", "#ff5555", "#cc66ff", "#00ccff",
+  "#ffcc00", "#ff6644", "#ff8800", "#44ccff"
+];
+const STAT_ICONS = ["♥", "♦", "☠", "»", "◆", "✦", "⟳", "⚡"];
+
+/* ===== FACTION COLORS ===== */
+const FACTIONS = {
+  red:    { name: "Crimson", body: "#cc2222", accent: "#ff4444", dark: "#991111", glow: "#ff6644", style: "aggressive" },
+  blue:   { name: "Cobalt",  body: "#2244cc", accent: "#4488ff", dark: "#112299", glow: "#4466ff", style: "tactical" },
+  yellow: { name: "Amber",   body: "#cc8800", accent: "#ffcc00", dark: "#996600", glow: "#ffaa22", style: "fast" },
+  purple: { name: "Violet",  body: "#7722aa", accent: "#aa44ff", dark: "#551188", glow: "#cc66ff", style: "tanky" },
+};
+const FACTION_KEYS = Object.keys(FACTIONS);
+
+/* ===== LOOT TYPES ===== */
+const LOOT_TYPES = {
+  xp_small:   { color: "#44ffcc", glow: "#22ddaa", radius: 5,  value: 10, type: "xp" },
+  xp_medium:  { color: "#44ff88", glow: "#22dd66", radius: 7,  value: 25, type: "xp" },
+  xp_large:   { color: "#88ff44", glow: "#66dd22", radius: 9,  value: 60, type: "xp" },
+  oil_small:  { color: "#222", glow: "#555", radius: 6,  value: 20, type: "oil" },
+  oil_large:  { color: "#111", glow: "#444", radius: 9,  value: 50, type: "oil" },
+  pow_speed:  { color: "#44ccff", glow: "#22aaff", radius: 10, duration: 8, type: "powerup", effect: "speed", label: "SPEED!" },
+  pow_damage: { color: "#ff4444", glow: "#ff2222", radius: 10, duration: 8, type: "powerup", effect: "damage", label: "DAMAGE!" },
+  pow_shield: { color: "#aa44ff", glow: "#8822dd", radius: 10, duration: 10, type: "powerup", effect: "shield", label: "SHIELD!" },
+  pow_magnet: { color: "#ffcc00", glow: "#ddaa00", radius: 10, duration: 12, type: "powerup", effect: "magnet", label: "MAGNET!" },
+};
 
 /* ===== CANVAS SETUP ===== */
 const canvas = document.getElementById("game");
@@ -72,20 +116,28 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
 function randInt(lo, hi) { return Math.floor(rand(lo, hi + 1)); }
 function lerp(a, b, t) { return a + (b - a) * t; }
+function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 /* ===== SCREEN SHAKE ===== */
 let shakeAmount = 0;
 function addShake(amount) { shakeAmount = Math.min(shakeAmount + amount, 15); }
 
+/* ===== HIGH SCORES ===== */
+let highScore = 0;
+try { highScore = parseInt(localStorage.getItem("bgb_highscore")) || 0; } catch(e) {}
+function saveHighScore(s) { if (s > highScore) { highScore = s; try { localStorage.setItem("bgb_highscore", s); } catch(e) {} } }
+
 /* ===== INPUT ===== */
 const keys = {};
-window.addEventListener("keydown", e => { keys[e.code] = true; });
+window.addEventListener("keydown", e => { keys[e.code] = true; if (gameState === "playing" && e.key >= "1" && e.key <= "8") { allocateStat(parseInt(e.key) - 1); } });
 window.addEventListener("keyup", e => { keys[e.code] = false; });
 
 let touchMove = { x: 0, y: 0, active: false };
+let touchAim = { x: 0, y: 0, active: false };
 let touchFire = false;
 let touchMissile = false;
 let joystickCenter = null;
+let aimJoystickCenter = null;
 const JOYSTICK_RADIUS = 60;
 
 canvas.addEventListener("touchstart", handleTouch, { passive: false });
@@ -96,9 +148,12 @@ canvas.addEventListener("touchcancel", handleTouchEnd, { passive: false });
 function handleTouch(e) {
   e.preventDefault();
   if (gameState === "upgrade") { handleUpgradeTouch(e); return; }
+  if (gameState === "playing" && showStatPanel) { handleStatTouch(e); return; }
   if (gameState !== "playing") return;
+  touchFire = false;
+  touchMissile = false;
   for (const t of e.touches) {
-    if (t.clientX < W * 0.5) {
+    if (t.clientX < W * 0.4) {
       if (!joystickCenter) joystickCenter = { x: t.clientX, y: t.clientY };
       const dx = t.clientX - joystickCenter.x;
       const dy = t.clientY - joystickCenter.y;
@@ -109,8 +164,20 @@ function handleTouch(e) {
         touchMove.active = true;
       }
     } else {
-      if (t.clientY < H * 0.5) touchMissile = true;
-      else touchFire = true;
+      if (!aimJoystickCenter) aimJoystickCenter = { x: t.clientX, y: t.clientY };
+      const dx = t.clientX - aimJoystickCenter.x;
+      const dy = t.clientY - aimJoystickCenter.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 10) {
+        touchAim.x = dx / Math.max(d, JOYSTICK_RADIUS);
+        touchAim.y = dy / Math.max(d, JOYSTICK_RADIUS);
+        touchAim.active = true;
+        touchFire = true;
+        if (d > JOYSTICK_RADIUS * 1.3) touchMissile = true;
+      } else {
+        touchAim.active = false;
+        touchFire = false;
+      }
     }
   }
 }
@@ -119,23 +186,32 @@ function handleTouchEnd(e) {
   e.preventDefault();
   if (e.touches.length === 0) {
     touchMove = { x: 0, y: 0, active: false };
+    touchAim = { x: 0, y: 0, active: false };
     joystickCenter = null;
+    aimJoystickCenter = null;
     touchFire = false;
     touchMissile = false;
   } else {
-    let hasLeft = false, hasRightLow = false, hasRightHigh = false;
+    let hasLeft = false, hasRight = false;
     for (const t of e.touches) {
-      if (t.clientX < W * 0.5) hasLeft = true;
-      else if (t.clientY >= H * 0.5) hasRightLow = true;
-      else hasRightHigh = true;
+      if (t.clientX < W * 0.4) hasLeft = true;
+      else hasRight = true;
     }
     if (!hasLeft) { touchMove = { x: 0, y: 0, active: false }; joystickCenter = null; }
-    touchFire = hasRightLow;
-    touchMissile = hasRightHigh;
+    if (!hasRight) { touchAim = { x: 0, y: 0, active: false }; aimJoystickCenter = null; touchFire = false; touchMissile = false; }
   }
 }
 
-let mouseX = W / 2, mouseY = H / 2;
+function handleStatTouch(e) {
+  for (const t of e.changedTouches) {
+    if (t.clientX < 200 && statPoints > 0) {
+      const idx = Math.floor((t.clientY - 80) / 28);
+      if (idx >= 0 && idx < 8) allocateStat(idx);
+    }
+  }
+}
+
+let mouseX = 0, mouseY = 0;
 let mouseDown = false;
 let rightMouseDown = false;
 canvas.addEventListener("mousemove", e => { mouseX = e.clientX; mouseY = e.clientY; });
@@ -152,13 +228,23 @@ canvas.addEventListener("contextmenu", e => e.preventDefault());
 /* ===== CAMERA ===== */
 const camera = { x: 0, y: 0 };
 function updateCamera(target) {
-  camera.x = clamp(target.x - W / 2, 0, Math.max(0, WORLD_W - W));
-  camera.y = clamp(target.y - H / 2, 0, Math.max(0, WORLD_H - H));
+  let cx = target.x - W / 2;
+  let cy = target.y - H / 2;
+  if (touchAim.active) {
+    cx += touchAim.x * W * 0.15;
+    cy += touchAim.y * H * 0.15;
+  } else if (!("ontouchstart" in window)) {
+    cx += (mouseX - W / 2) * 0.12;
+    cy += (mouseY - H / 2) * 0.12;
+  }
+  camera.x = lerp(camera.x, clamp(cx, 0, Math.max(0, WORLD_W - W)), 0.08);
+  camera.y = lerp(camera.y, clamp(cy, 0, Math.max(0, WORLD_H - H)), 0.08);
 }
 
 /* ===== PARTICLES ===== */
 const particles = [];
 function spawnParticle(x, y, vx, vy, life, r, color, type) {
+  if (particles.length > 600) return;
   particles.push({ x, y, vx, vy, life, maxLife: life, r, color, type: type || "circle" });
 }
 function spawnExplosion(x, y, color, count) {
@@ -192,35 +278,72 @@ function spawnEngineTrail(x, y, a) {
   const sp = rand(0.5, 1.5);
   spawnParticle(x, y, Math.cos(sa) * sp, Math.sin(sa) * sp, rand(0.2, 0.5), rand(1, 3), "#557799", "smoke");
 }
+function spawnLevelUpEffect(x, y) {
+  for (let i = 0; i < 24; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = rand(2, 6);
+    spawnParticle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, rand(0.5, 1.2), rand(3, 7), pickRandom(["#ffcc00","#44ff88","#44ccff","#ff8844"]), "fire");
+  }
+}
 
 /* ===== FLOATING TEXT ===== */
 const floatingTexts = [];
-function spawnFloatingText(x, y, text, color) {
-  floatingTexts.push({ x, y, text, color, life: 1.5, maxLife: 1.5 });
+function spawnFloatingText(x, y, text, color, size) {
+  floatingTexts.push({ x, y, text, color, life: 1.5, maxLife: 1.5, size: size || 13 });
 }
 
-/* ===== UPGRADE SYSTEM ===== */
+/* ===== STAT POINT SYSTEM (diep.io) ===== */
+let playerLevel = 1;
+let playerXP = 0;
+let statPoints = 0;
+let stats = [0,0,0,0,0,0,0,0];
+let showStatPanel = true;
+
+function xpForLevel(lvl) { return Math.floor(40 + lvl * 25 + lvl * lvl * 5); }
+
+function addXP(amount) {
+  playerXP += amount;
+  while (playerLevel < MAX_LEVEL && playerXP >= xpForLevel(playerLevel)) {
+    playerXP -= xpForLevel(playerLevel);
+    playerLevel++;
+    statPoints++;
+    spawnLevelUpEffect(player.x, player.y);
+    spawnFloatingText(player.x, player.y - 35, "LEVEL " + playerLevel + "!", "#ffcc00", 18);
+    addShake(3);
+  }
+  if (playerLevel >= MAX_LEVEL) playerXP = 0;
+}
+
+function allocateStat(idx) {
+  if (statPoints <= 0 || idx < 0 || idx >= 8 || stats[idx] >= STAT_MAX) return;
+  stats[idx]++;
+  statPoints--;
+}
+
+function getStatMult(idx) { return stats[idx] / STAT_MAX; }
+
+/* ===== UPGRADE SYSTEM (vampire survivors style) ===== */
 const UPGRADES = {
-  speed_boost: { name: "Afterburner", desc: "+20% speed", icon: "\u26A1", color: "#44ccff", maxLevel: 3,
-    apply: (l) => { upgradeStats.speedMult = 1 + l * 0.2; } },
-  armor: { name: "Reinforced Hull", desc: "-25% damage", icon: "\uD83D\uDEE1\uFE0F", color: "#4488ff", maxLevel: 3,
-    apply: (l) => { upgradeStats.armorMult = 1 - l * 0.2; } },
-  rapid_fire: { name: "Rapid Fire", desc: "+30% fire rate", icon: "\uD83D\uDD25", color: "#ff8844", maxLevel: 3,
-    apply: (l) => { upgradeStats.fireRateMult = 1 - l * 0.2; } },
-  spread_shot: { name: "Spread Shot", desc: "Spread pattern", icon: "\uD83C\uDF1F", color: "#ffcc00", maxLevel: 2,
+  spread_shot: { name: "Spread Shot", desc: "Spread pattern", icon: "🌟", color: "#ffcc00", maxLevel: 2,
     apply: (l) => { upgradeStats.spreadCount = 1 + l * 2; } },
-  oil_magnet: { name: "Oil Magnet", desc: "+50% oil gain", icon: "\uD83E\uDDF2", color: "#88ff44", maxLevel: 3,
+  oil_magnet: { name: "Oil Magnet", desc: "+50% oil gain", icon: "🧲", color: "#88ff44", maxLevel: 3,
     apply: (l) => { upgradeStats.oilMult = 1 + l * 0.5; } },
-  shield: { name: "Energy Shield", desc: "Auto-shield 15s", icon: "\uD83D\uDD2E", color: "#aa44ff", maxLevel: 2,
+  shield: { name: "Energy Shield", desc: "Auto-shield 15s", icon: "🔮", color: "#aa44ff", maxLevel: 2,
     apply: (l) => { upgradeStats.shieldInterval = Math.max(8, 15 - l * 4); upgradeStats.hasShield = true; } },
-  emp: { name: "EMP Blast", desc: "Stun on damage", icon: "\uD83D\uDCAB", color: "#44ffff", maxLevel: 2,
+  emp: { name: "EMP Blast", desc: "Stun on damage", icon: "💫", color: "#44ffff", maxLevel: 2,
     apply: (l) => { upgradeStats.empRadius = 80 + l * 60; upgradeStats.hasEmp = true; } },
-  critical: { name: "Critical Strike", desc: "+15% crit (2x)", icon: "\uD83D\uDCA5", color: "#ff4444", maxLevel: 3,
+  critical: { name: "Critical Strike", desc: "+15% crit (2x)", icon: "💥", color: "#ff4444", maxLevel: 3,
     apply: (l) => { upgradeStats.critChance = l * 0.15; } },
-  repair: { name: "Nano Repair", desc: "+3 oil/sec regen", icon: "\uD83D\uDC9A", color: "#44ff88", maxLevel: 3,
+  repair: { name: "Nano Repair", desc: "+3 oil/sec regen", icon: "💚", color: "#44ff88", maxLevel: 3,
     apply: (l) => { upgradeStats.regenRate = l * 3; } },
-  missile_boost: { name: "Warhead Upgrade", desc: "+40% missile dmg", icon: "\uD83D\uDE80", color: "#ff6600", maxLevel: 2,
-    apply: (l) => { upgradeStats.missileDmgMult = 1 + l * 0.4; upgradeStats.missileSpeedMult = 1 + l * 0.3; } }
+  missile_boost: { name: "Warhead Upgrade", desc: "+40% missile dmg", icon: "🚀", color: "#ff6600", maxLevel: 2,
+    apply: (l) => { upgradeStats.missileDmgMult = 1 + l * 0.4; upgradeStats.missileSpeedMult = 1 + l * 0.3; } },
+  piercing: { name: "Piercing Rounds", desc: "Bullets pierce +1", icon: "⟐", color: "#ffaa44", maxLevel: 2,
+    apply: (l) => { upgradeStats.extraPierce = l; } },
+  orbital: { name: "Orbital Strike", desc: "Auto-turret orbits", icon: "⊕", color: "#66ccff", maxLevel: 2,
+    apply: (l) => { upgradeStats.orbitalCount = l; } },
+  xp_boost: { name: "Knowledge", desc: "+30% XP gain", icon: "📖", color: "#ddddff", maxLevel: 3,
+    apply: (l) => { upgradeStats.xpMult = 1 + l * 0.3; } },
 };
 
 let upgradeStats = {};
@@ -231,10 +354,11 @@ let totalUpgrades = 0;
 
 function resetUpgrades() {
   upgradeStats = {
-    speedMult: 1, armorMult: 1, fireRateMult: 1, spreadCount: 1,
+    spreadCount: 1,
     oilMult: 1, hasShield: false, shieldInterval: 15, shieldTimer: 0,
     empRadius: 0, hasEmp: false, critChance: 0, regenRate: 0,
-    missileDmgMult: 1, missileSpeedMult: 1
+    missileDmgMult: 1, missileSpeedMult: 1,
+    extraPierce: 0, orbitalCount: 0, xpMult: 1,
   };
   upgradeLevels = {};
   nextUpgradeScore = UPGRADE_INTERVAL;
@@ -268,8 +392,8 @@ function handleUpgradeClick(mx, my) {
   const cardW = Math.min(200, W * 0.28);
   const cardH = Math.min(260, H * 0.45);
   const gap = Math.min(30, W * 0.03);
-  const totalW = upgradeChoices.length * cardW + (upgradeChoices.length - 1) * gap;
-  const startX = (W - totalW) / 2;
+  const totalW2 = upgradeChoices.length * cardW + (upgradeChoices.length - 1) * gap;
+  const startX = (W - totalW2) / 2;
   const startY = (H - cardH) / 2;
   for (let i = 0; i < upgradeChoices.length; i++) {
     const cx = startX + i * (cardW + gap);
@@ -282,17 +406,66 @@ function handleUpgradeClick(mx, my) {
   }
 }
 
+/* ===== COMBO & STREAK ===== */
+let combo = 0;
+let comboTimer = 0;
+let killStreak = 0;
+let streakTimer = 0;
+let maxCombo = 0;
+let maxStreak = 0;
+
+function registerKill(scoreVal) {
+  combo++;
+  comboTimer = COMBO_DECAY;
+  killStreak++;
+  streakTimer = STREAK_DECAY;
+  const mult = 1 + Math.floor(combo / 5) * 0.25;
+  const gained = Math.floor(scoreVal * mult);
+  score += gained;
+  if (combo > maxCombo) maxCombo = combo;
+  if (killStreak > maxStreak) maxStreak = killStreak;
+  if (combo > 1 && combo % 5 === 0) {
+    spawnFloatingText(player.x, player.y - 50, combo + "x COMBO!", "#ff44ff", 16);
+    addShake(2);
+  }
+  if (killStreak > 0 && killStreak % 10 === 0) {
+    spawnFloatingText(player.x, player.y - 60, killStreak + " KILL STREAK!", "#ffcc00", 18);
+    player.oil = Math.min(getMaxOil(), player.oil + 30);
+    addShake(4);
+  }
+  return gained;
+}
+
+/* ===== POWERUP STATE ===== */
+let activePowerups = {};
+function addPowerup(effect, duration) {
+  activePowerups[effect] = (activePowerups[effect] || 0) + duration;
+}
+function hasPowerup(effect) { return (activePowerups[effect] || 0) > 0; }
+
 /* ===== GAME STATE ===== */
 let gameState = "title";
 let score = 0;
 let waveTimer = 0;
 let wantedLevel = 0;
 let time = 0;
+let rigRecaptureTimer = RIG_RECAPTURE_INTERVAL;
+
+/* ===== COMPUTED STATS (from diep.io points) ===== */
+function getMaxOil() { return OIL_BASE_MAX + stats[1] * 120; }
+function getHealthRegen() { return stats[0] * 1.5 + upgradeStats.regenRate; }
+function getBodyDamage() { return 5 + stats[2] * 8; }
+function getBulletSpeed() { return BULLET_BASE_SPEED + stats[3] * 1.2 + (hasPowerup("speed") ? 3 : 0); }
+function getBulletPenetration() { return stats[4] + upgradeStats.extraPierce; }
+function getBulletDamage() { return 15 + stats[5] * 7 + (hasPowerup("damage") ? 15 : 0); }
+function getReloadTime() { return Math.max(0.04, FIRE_BASE_COOLDOWN - stats[6] * 0.022); }
+function getMoveSpeed() { return PLAYER_BASE_SPEED + stats[7] * 0.35 + (hasPowerup("speed") ? 1.5 : 0); }
+function getPickupRadius() { return PICKUP_RADIUS + (hasPowerup("magnet") ? 200 : 0) + stats[1] * 5; }
 
 /* ===== PLAYER ===== */
 const player = {
   x: WORLD_W / 2, y: WORLD_H / 2, vx: 0, vy: 0,
-  angle: -Math.PI / 2, oil: OIL_START,
+  angle: -Math.PI / 2, oil: OIL_BASE,
   fireCooldown: 0, homingCooldown: 0, invincible: 0,
   rotorAngle: 0, tailRotorAngle: 0, alive: true,
   engineGlow: 0, shieldActive: false, shieldTimer: 0,
@@ -301,7 +474,7 @@ const player = {
 function resetPlayer() {
   Object.assign(player, {
     x: WORLD_W / 2, y: WORLD_H / 2, vx: 0, vy: 0,
-    angle: -Math.PI / 2, oil: OIL_START,
+    angle: -Math.PI / 2, oil: OIL_BASE,
     fireCooldown: 0, homingCooldown: 0, invincible: 0,
     rotorAngle: 0, tailRotorAngle: 0, alive: true,
     engineGlow: 0, shieldActive: false, shieldTimer: 0,
@@ -318,6 +491,9 @@ function fireBullet() {
   const spreadCount = upgradeStats.spreadCount;
   const offsets = hasDual ? [-8, 8] : [0];
   const spreadAngle = 0.12;
+  const bSpeed = getBulletSpeed();
+  const bDmg = getBulletDamage();
+  const pierce = getBulletPenetration();
   for (const off of offsets) {
     const perpAngle = player.angle + Math.PI / 2;
     const bx = player.x + Math.cos(perpAngle) * off;
@@ -327,11 +503,11 @@ function fireBullet() {
       for (let s = 0; s < spreadCount; s++) {
         const a = player.angle + (s - half) * spreadAngle;
         const isCrit = Math.random() < upgradeStats.critChance;
-        bullets.push({ x: bx, y: by, vx: Math.cos(a) * BULLET_SPEED, vy: Math.sin(a) * BULLET_SPEED, life: 1.5, damage: isCrit ? 40 : 20, crit: isCrit });
+        bullets.push({ x: bx, y: by, vx: Math.cos(a) * bSpeed, vy: Math.sin(a) * bSpeed, life: 1.8, damage: isCrit ? bDmg * 2 : bDmg, crit: isCrit, pierce: pierce });
       }
     } else {
       const isCrit = Math.random() < upgradeStats.critChance;
-      bullets.push({ x: bx, y: by, vx: Math.cos(player.angle) * BULLET_SPEED, vy: Math.sin(player.angle) * BULLET_SPEED, life: 1.5, damage: isCrit ? 40 : 20, crit: isCrit });
+      bullets.push({ x: bx, y: by, vx: Math.cos(player.angle) * bSpeed, vy: Math.sin(player.angle) * bSpeed, life: 1.8, damage: isCrit ? bDmg * 2 : bDmg, crit: isCrit, pierce: pierce });
     }
     spawnMuzzleFlash(bx, by, player.angle);
   }
@@ -359,21 +535,82 @@ function findNearestEnemy(from) {
 const rigs = [];
 function initRigs() {
   rigs.length = 0;
+  const margin = 350;
   for (let i = 0; i < RIG_COUNT; i++) {
-    rigs.push({ x: rand(300, WORLD_W - 300), y: rand(300, WORLD_H - 300),
+    rigs.push({
+      x: rand(margin, WORLD_W - margin), y: rand(margin, WORLD_H - margin),
       owner: "neutral", captureProgress: 0, hp: 100, maxHp: 100,
-      flamePhase: Math.random() * Math.PI * 2, craneAngle: Math.random() * Math.PI * 2 });
+      flamePhase: Math.random() * Math.PI * 2, craneAngle: Math.random() * Math.PI * 2,
+      underAttack: false, attackWarning: 0,
+      enemyCaptureProgress: 0,
+    });
+  }
+}
+
+/* ===== LOOT DROPS ===== */
+const loot = [];
+function spawnLoot(x, y, enemy) {
+  // Always drop XP
+  const xpType = enemy.scoreValue >= 150 ? "xp_large" : enemy.scoreValue >= 100 ? "xp_medium" : "xp_small";
+  const a1 = Math.random() * Math.PI * 2;
+  loot.push({ ...LOOT_TYPES[xpType], x: x + Math.cos(a1) * 8, y: y + Math.sin(a1) * 8, life: 15, bobPhase: Math.random() * Math.PI * 2 });
+  // Chance for oil
+  if (Math.random() < 0.35) {
+    const ot = Math.random() < 0.3 ? "oil_large" : "oil_small";
+    const a2 = Math.random() * Math.PI * 2;
+    loot.push({ ...LOOT_TYPES[ot], x: x + Math.cos(a2) * 12, y: y + Math.sin(a2) * 12, life: 15, bobPhase: Math.random() * Math.PI * 2 });
+  }
+  // Rare powerup
+  if (Math.random() < 0.06) {
+    const types = ["pow_speed","pow_damage","pow_shield","pow_magnet"];
+    const pt = pickRandom(types);
+    loot.push({ ...LOOT_TYPES[pt], x, y, life: 20, bobPhase: Math.random() * Math.PI * 2 });
+  }
+  // Boss drops more
+  if (enemy.isBoss) {
+    for (let i = 0; i < 5; i++) {
+      const a3 = Math.random() * Math.PI * 2;
+      const r3 = rand(10, 30);
+      loot.push({ ...LOOT_TYPES["xp_large"], x: x + Math.cos(a3) * r3, y: y + Math.sin(a3) * r3, life: 20, bobPhase: Math.random() * Math.PI * 2 });
+    }
+    loot.push({ ...LOOT_TYPES[pickRandom(["pow_speed","pow_damage","pow_shield","pow_magnet"])], x, y, life: 25, bobPhase: Math.random() * Math.PI * 2 });
   }
 }
 
 /* ===== ENEMIES ===== */
 const enemies = [];
-function spawnDrone(x, y) {
-  enemies.push({ type: "drone", x, y, vx: 0, vy: 0, hp: 30, maxHp: 30, angle: 0,
-    speed: 2.5 + wantedLevel * 0.3, damage: DRONE_DAMAGE, radius: 14, scoreValue: 50,
-    rotorAngle: Math.random() * Math.PI * 2, stunTimer: 0 });
+
+function getRandomFaction() {
+  const weights = { red: 35, blue: 25, yellow: 25, purple: 15 };
+  const total = Object.values(weights).reduce((a,b) => a + b, 0);
+  let r = Math.random() * total;
+  for (const [k, w] of Object.entries(weights)) { r -= w; if (r <= 0) return k; }
+  return "red";
 }
-function spawnPlane(edge) {
+
+function spawnDrone(x, y, faction) {
+  faction = faction || getRandomFaction();
+  const f = FACTIONS[faction];
+  const isTanky = faction === "purple";
+  const isFast = faction === "yellow";
+  enemies.push({
+    type: "drone", x, y, vx: 0, vy: 0,
+    hp: isTanky ? 60 : 30, maxHp: isTanky ? 60 : 30,
+    angle: 0,
+    speed: (isFast ? 3.8 : 2.5) + wantedLevel * 0.3,
+    damage: DRONE_DAMAGE + (isTanky ? 10 : 0),
+    radius: isTanky ? 18 : 14, scoreValue: isTanky ? 80 : 50,
+    rotorAngle: Math.random() * Math.PI * 2, stunTimer: 0,
+    faction, isBoss: false,
+    aiState: "chase", aiTimer: 0,
+    retreatAngle: 0,
+  });
+}
+
+function spawnPlane(edge, faction) {
+  faction = faction || getRandomFaction();
+  const f = FACTIONS[faction];
+  const isFast = faction === "yellow";
   let x, y, ang;
   switch (edge) {
     case 0: x = rand(0, WORLD_W); y = -40; ang = Math.PI / 2 + rand(-0.3, 0.3); break;
@@ -381,14 +618,48 @@ function spawnPlane(edge) {
     case 2: x = rand(0, WORLD_W); y = WORLD_H + 40; ang = -Math.PI / 2 + rand(-0.3, 0.3); break;
     default: x = -40; y = rand(0, WORLD_H); ang = rand(-0.3, 0.3); break;
   }
-  enemies.push({ type: "plane", x, y, vx: 0, vy: 0, hp: 50, maxHp: 50, angle: ang,
-    speed: 5 + wantedLevel * 0.4, damage: PLANE_DAMAGE, radius: 18, scoreValue: 100,
-    fireCooldown: 0, propAngle: 0, stunTimer: 0 });
+  enemies.push({
+    type: "plane", x, y, vx: 0, vy: 0,
+    hp: 50, maxHp: 50, angle: ang,
+    speed: (isFast ? 7 : 5) + wantedLevel * 0.4,
+    damage: PLANE_DAMAGE,
+    radius: 18, scoreValue: 100,
+    fireCooldown: 0, propAngle: 0, stunTimer: 0,
+    faction, isBoss: false,
+    aiState: "flyby", aiTimer: 0,
+  });
 }
-function spawnChopper(x, y) {
-  enemies.push({ type: "chopper", x, y, vx: 0, vy: 0, hp: 80, maxHp: 80, angle: 0,
-    speed: 2 + wantedLevel * 0.2, damage: CHOPPER_DAMAGE, radius: 18, scoreValue: 150,
-    fireCooldown: 0, rotorAngle: 0, tailRotorAngle: 0, stunTimer: 0 });
+
+function spawnChopper(x, y, faction) {
+  faction = faction || getRandomFaction();
+  const f = FACTIONS[faction];
+  const isTanky = faction === "purple";
+  enemies.push({
+    type: "chopper", x, y, vx: 0, vy: 0,
+    hp: isTanky ? 140 : 80, maxHp: isTanky ? 140 : 80,
+    angle: 0,
+    speed: 2 + wantedLevel * 0.2,
+    damage: CHOPPER_DAMAGE + (isTanky ? 10 : 0),
+    radius: 18, scoreValue: 150,
+    fireCooldown: 0, rotorAngle: 0, tailRotorAngle: 0, stunTimer: 0,
+    faction, isBoss: false,
+    aiState: "orbit", aiTimer: 0,
+    orbitDir: Math.random() < 0.5 ? 1 : -1,
+  });
+}
+
+function spawnBoss(x, y) {
+  const faction = pickRandom(FACTION_KEYS);
+  enemies.push({
+    type: "chopper", x, y, vx: 0, vy: 0,
+    hp: 400 + wantedLevel * 100, maxHp: 400 + wantedLevel * 100,
+    angle: 0, speed: 1.8,
+    damage: 40, radius: 28, scoreValue: 500,
+    fireCooldown: 0, rotorAngle: 0, tailRotorAngle: 0, stunTimer: 0,
+    faction, isBoss: true,
+    aiState: "orbit", aiTimer: 0,
+    orbitDir: Math.random() < 0.5 ? 1 : -1,
+  });
 }
 
 /* ===== WAVE SPAWNER ===== */
@@ -399,25 +670,68 @@ function spawnWave(dt) {
   for (let i = WANTED_THRESHOLDS.length - 1; i >= 0; i--) {
     if (player.oil >= WANTED_THRESHOLDS[i]) { wantedLevel = i; break; }
   }
-  waveTimer = Math.max(1.0, 3.5 - wantedLevel * 0.5);
+  waveTimer = Math.max(0.8, 3.2 - wantedLevel * 0.5);
   const spawnAngle = Math.random() * Math.PI * 2;
   const sx = clamp(player.x + Math.cos(spawnAngle) * ENEMY_SPAWN_DISTANCE, 50, WORLD_W - 50);
   const sy = clamp(player.y + Math.sin(spawnAngle) * ENEMY_SPAWN_DISTANCE, 50, WORLD_H - 50);
   const roll = Math.random();
-  if (roll < 0.45) {
-    for (let i = 0; i < 2 + wantedLevel; i++) spawnDrone(sx + rand(-40, 40), sy + rand(-40, 40));
-  } else if (roll < 0.75) {
-    spawnPlane(randInt(0, 3));
+  const faction = getRandomFaction();
+  if (roll < 0.4) {
+    const count = 2 + wantedLevel + (faction === "yellow" ? 2 : 0);
+    for (let i = 0; i < count; i++) spawnDrone(sx + rand(-40, 40), sy + rand(-40, 40), faction);
+  } else if (roll < 0.7) {
+    spawnPlane(randInt(0, 3), faction);
+    if (wantedLevel >= 2) spawnPlane(randInt(0, 3), faction);
   } else {
-    spawnChopper(sx, sy);
+    spawnChopper(sx, sy, faction);
   }
-  if (wantedLevel >= 3) spawnChopper(sx + 60, sy + 60);
-  if (wantedLevel >= 4) { spawnPlane(randInt(0, 3)); spawnPlane(randInt(0, 3)); }
+  if (wantedLevel >= BOSS_THRESHOLD && Math.random() < 0.08) {
+    spawnBoss(sx + 80, sy + 80);
+    spawnFloatingText(player.x, player.y - 40, "⚠ BOSS INCOMING!", "#ff4444", 20);
+    addShake(6);
+  }
+  if (wantedLevel >= 3) spawnChopper(sx + 60, sy + 60, faction);
+  if (wantedLevel >= 4) { spawnPlane(randInt(0, 3), faction); spawnPlane(randInt(0, 3), faction); }
+}
+
+/* ===== RIG RECAPTURE AI ===== */
+function updateRigRecapture(dt) {
+  rigRecaptureTimer -= dt;
+  if (rigRecaptureTimer > 0) return;
+  rigRecaptureTimer = RIG_RECAPTURE_INTERVAL - wantedLevel * 3;
+  const playerRigs = rigs.filter(r => r.owner === "player" && r.hp > 0);
+  if (playerRigs.length === 0) return;
+  const target = pickRandom(playerRigs);
+  target.underAttack = true;
+  target.attackWarning = 3.0;
+  spawnFloatingText(player.x, player.y - 50, "⚠ RIG UNDER ATTACK!", "#ff4444", 16);
+  const faction = getRandomFaction();
+  const count = 3 + wantedLevel;
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = rand(200, 350);
+    const ex = clamp(target.x + Math.cos(a) * d, 50, WORLD_W - 50);
+    const ey = clamp(target.y + Math.sin(a) * d, 50, WORLD_H - 50);
+    if (i < count - 1) {
+      spawnDrone(ex, ey, faction);
+      enemies[enemies.length - 1].targetRig = target;
+    } else {
+      spawnChopper(ex, ey, faction);
+      enemies[enemies.length - 1].targetRig = target;
+    }
+  }
 }
 
 /* ===== UPDATE ===== */
 function update(dt) {
   time += dt;
+  // Combo/streak decay
+  comboTimer -= dt; if (comboTimer <= 0) { combo = 0; comboTimer = 0; }
+  streakTimer -= dt; if (streakTimer <= 0) { killStreak = 0; streakTimer = 0; }
+  // Powerup timers
+  for (const k in activePowerups) { activePowerups[k] -= dt; if (activePowerups[k] <= 0) delete activePowerups[k]; }
+
+  // Player movement
   let ix = 0, iy = 0;
   if (keys["KeyW"] || keys["ArrowUp"]) iy -= 1;
   if (keys["KeyS"] || keys["ArrowDown"]) iy += 1;
@@ -426,94 +740,258 @@ function update(dt) {
   if (touchMove.active) { ix = touchMove.x; iy = touchMove.y; }
   const inputLen = Math.hypot(ix, iy);
   if (inputLen > 0.01) { ix /= inputLen; iy /= inputLen; }
-  const speed = Math.max(1, PLAYER_BASE_SPEED * upgradeStats.speedMult - (player.oil / OIL_MAX) * PLAYER_MAX_SPEED_PENALTY);
+  const speed = Math.max(1, getMoveSpeed() - (player.oil / getMaxOil()) * 1.2);
   player.vx = lerp(player.vx, ix * speed, 0.15);
   player.vy = lerp(player.vy, iy * speed, 0.15);
   player.x = clamp(player.x + player.vx, 20, WORLD_W - 20);
   player.y = clamp(player.y + player.vy, 20, WORLD_H - 20);
   player.engineGlow = lerp(player.engineGlow, inputLen > 0.1 ? 1 : 0.2, 0.1);
   if (inputLen > 0.1 && Math.random() < 0.5) spawnEngineTrail(player.x - Math.cos(player.angle) * 14, player.y - Math.sin(player.angle) * 14, player.angle);
-  if (touchMove.active && inputLen > 0.01) player.angle = Math.atan2(iy, ix);
-  else if (!touchMove.active) player.angle = Math.atan2(mouseY + camera.y - player.y, mouseX + camera.x - player.x);
+
+  // Aiming - twin stick on mobile, mouse on desktop
+  if (touchAim.active) {
+    player.angle = Math.atan2(touchAim.y, touchAim.x);
+  } else if (touchMove.active && !touchAim.active && inputLen > 0.01) {
+    player.angle = Math.atan2(iy, ix);
+  } else if (!touchMove.active) {
+    player.angle = Math.atan2(mouseY + camera.y - player.y, mouseX + camera.x - player.x);
+  }
+
   player.rotorAngle += dt * 25;
   player.tailRotorAngle += dt * 35;
   if (player.invincible > 0) player.invincible -= dt;
-  if (upgradeStats.hasShield) { player.shieldTimer -= dt; if (player.shieldTimer <= 0) { player.shieldActive = true; player.shieldTimer = upgradeStats.shieldInterval; } }
-  if (upgradeStats.regenRate > 0) player.oil = Math.min(OIL_MAX, player.oil + upgradeStats.regenRate * dt);
 
+  // Shield
+  if (upgradeStats.hasShield) {
+    player.shieldTimer -= dt;
+    if (player.shieldTimer <= 0) { player.shieldActive = true; player.shieldTimer = upgradeStats.shieldInterval; }
+  }
+  if (hasPowerup("shield") && !player.shieldActive) { player.shieldActive = true; }
+
+  // Health regen (stat-based + upgrade)
+  const regen = getHealthRegen();
+  if (regen > 0) player.oil = Math.min(getMaxOil(), player.oil + regen * dt);
+
+  // Firing
   player.fireCooldown -= dt;
   player.homingCooldown -= dt;
   const wantFire = keys["Space"] || mouseDown || touchFire;
   const wantMissile = keys["KeyE"] || rightMouseDown || touchMissile;
-  if (wantFire && player.fireCooldown <= 0) { fireBullet(); player.fireCooldown = (FIRE_COOLDOWN_MS / 1000) * upgradeStats.fireRateMult; }
+  if (wantFire && player.fireCooldown <= 0) { fireBullet(); player.fireCooldown = getReloadTime(); }
   if (wantMissile && player.homingCooldown <= 0 && player.oil >= HOMING_THRESHOLD) { if (fireHoming()) player.homingCooldown = HOMING_COOLDOWN_MS / 1000; }
 
-  for (const rig of rigs) {
-    if (rig.hp <= 0) continue;
-    rig.flamePhase += dt * 4;
-    rig.craneAngle += dt * 0.8;
-    if (dist(player, rig) < CAPTURE_RADIUS && rig.owner !== "player") {
-      rig.captureProgress += dt;
-      if (rig.captureProgress >= CAPTURE_TIME) { rig.owner = "player"; rig.captureProgress = 0; score += 200; spawnFloatingText(rig.x, rig.y - 30, "+200 CAPTURED", "#44ff88"); }
-    } else if (rig.owner !== "player") { rig.captureProgress = Math.max(0, rig.captureProgress - dt * 0.5); }
-    if (rig.owner === "player" && player.oil < OIL_MAX) player.oil = Math.min(OIL_MAX, player.oil + OIL_PER_SECOND * upgradeStats.oilMult * dt);
+  // Orbital auto-turrets
+  if (upgradeStats.orbitalCount > 0) {
+    for (let o = 0; o < upgradeStats.orbitalCount; o++) {
+      const oa = time * 2.5 + o * Math.PI;
+      const ox = player.x + Math.cos(oa) * 40;
+      const oy = player.y + Math.sin(oa) * 40;
+      if (Math.random() < dt * 3) {
+        const target = findNearestEnemy({ x: ox, y: oy });
+        if (target && dist({ x: ox, y: oy }, target) < 300) {
+          const ta = angle({ x: ox, y: oy }, target);
+          bullets.push({ x: ox, y: oy, vx: Math.cos(ta) * 8, vy: Math.sin(ta) * 8, life: 1, damage: 10, crit: false, pierce: 0 });
+        }
+      }
+    }
   }
 
+  // Oil rigs
+  for (const rig of rigs) {
+    if (rig.hp <= 0) {
+      rig.owner = "neutral";
+      rig.enemyCaptureProgress = 0;
+      continue;
+    }
+    rig.flamePhase += dt * 4;
+    rig.craneAngle += dt * 0.8;
+    if (rig.attackWarning > 0) rig.attackWarning -= dt;
+    else rig.underAttack = false;
+
+    if (dist(player, rig) < CAPTURE_RADIUS && rig.owner !== "player") {
+      rig.captureProgress += dt;
+      rig.enemyCaptureProgress = 0;
+      if (rig.captureProgress >= CAPTURE_TIME) {
+        rig.owner = "player"; rig.captureProgress = 0; rig.hp = rig.maxHp;
+        const gained = 200;
+        score += gained;
+        addXP(50);
+        spawnFloatingText(rig.x, rig.y - 30, "+200 CAPTURED", "#44ff88");
+      }
+    } else if (rig.owner !== "player") {
+      rig.captureProgress = Math.max(0, rig.captureProgress - dt * 0.5);
+    }
+    if (rig.owner === "player" && player.oil < getMaxOil()) {
+      player.oil = Math.min(getMaxOil(), player.oil + OIL_PER_SECOND * upgradeStats.oilMult * dt);
+    }
+  }
+
+  // Rig recapture
+  updateRigRecapture(dt);
+
+  // Spawn enemies
   spawnWave(dt);
 
+  // Update enemies
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
     if (e.stunTimer > 0) { e.stunTimer -= dt; if (e.type === "drone") e.rotorAngle += dt * 10; continue; }
+
+    const f = FACTIONS[e.faction] || FACTIONS.red;
+    const hasTarget = e.targetRig && e.targetRig.owner === "player" && e.targetRig.hp > 0;
+    const chaseTarget = hasTarget ? e.targetRig : player;
+
     if (e.type === "drone") {
       e.rotorAngle += dt * 30;
-      const a = angle(e, player);
-      e.vx = lerp(e.vx, Math.cos(a) * e.speed, 0.08);
-      e.vy = lerp(e.vy, Math.sin(a) * e.speed, 0.08);
+      const dToTarget = dist(e, chaseTarget);
+
+      // AI based on faction
+      if (f.style === "tactical") {
+        // Strafe around target
+        e.aiTimer -= dt;
+        if (e.aiTimer <= 0) { e.aiState = e.aiState === "strafe_left" ? "strafe_right" : "strafe_left"; e.aiTimer = rand(1, 3); }
+        const a = angle(e, chaseTarget);
+        const strafeDir = e.aiState === "strafe_left" ? Math.PI / 2 : -Math.PI / 2;
+        if (dToTarget > 80) {
+          e.vx = lerp(e.vx, Math.cos(a) * e.speed * 0.7 + Math.cos(a + strafeDir) * e.speed * 0.5, 0.06);
+          e.vy = lerp(e.vy, Math.sin(a) * e.speed * 0.7 + Math.sin(a + strafeDir) * e.speed * 0.5, 0.06);
+        } else {
+          e.vx = lerp(e.vx, Math.cos(a + strafeDir) * e.speed, 0.06);
+          e.vy = lerp(e.vy, Math.sin(a + strafeDir) * e.speed, 0.06);
+        }
+      } else if (f.style === "fast") {
+        // Hit-and-run
+        e.aiTimer -= dt;
+        if (dToTarget < 60 && e.aiState === "chase") { e.aiState = "retreat"; e.aiTimer = 1.5; e.retreatAngle = angle(chaseTarget, e) + rand(-0.5, 0.5); }
+        if (e.aiTimer <= 0 && e.aiState === "retreat") { e.aiState = "chase"; e.aiTimer = 2; }
+        if (e.aiState === "retreat") {
+          e.vx = lerp(e.vx, Math.cos(e.retreatAngle) * e.speed * 1.3, 0.1);
+          e.vy = lerp(e.vy, Math.sin(e.retreatAngle) * e.speed * 1.3, 0.1);
+        } else {
+          const a = angle(e, chaseTarget);
+          e.vx = lerp(e.vx, Math.cos(a) * e.speed, 0.1);
+          e.vy = lerp(e.vy, Math.sin(a) * e.speed, 0.1);
+        }
+      } else if (f.style === "tanky") {
+        // Slow but relentless
+        const a = angle(e, chaseTarget);
+        e.vx = lerp(e.vx, Math.cos(a) * e.speed * 0.7, 0.04);
+        e.vy = lerp(e.vy, Math.sin(a) * e.speed * 0.7, 0.04);
+      } else {
+        // Aggressive (red) - direct charge
+        const a = angle(e, chaseTarget);
+        e.vx = lerp(e.vx, Math.cos(a) * e.speed, 0.08);
+        e.vy = lerp(e.vy, Math.sin(a) * e.speed, 0.08);
+      }
       e.x += e.vx; e.y += e.vy;
+      e.x = clamp(e.x, 10, WORLD_W - 10);
+      e.y = clamp(e.y, 10, WORLD_H - 10);
       e.angle = Math.atan2(e.vy, e.vx);
-      if (dist(e, player) < 28 && player.invincible <= 0) { damagePlayer(e.damage); e.hp = 0; spawnExplosion(e.x, e.y, "#ff5500", 12); addShake(4); }
+
+      // Collision with player
+      if (dist(e, player) < 28 && player.invincible <= 0) {
+        damagePlayer(e.damage);
+        // Body damage back to enemy
+        e.hp -= getBodyDamage();
+        if (e.hp > 0) { spawnExplosion(e.x, e.y, f.accent, 8); }
+        else { spawnExplosion(e.x, e.y, f.accent, 12); }
+        addShake(4);
+      }
     }
+
     if (e.type === "plane") {
       e.propAngle = (e.propAngle || 0) + dt * 40;
+      // Smarter plane AI: turn towards player when far
+      if (f.style === "tactical") {
+        const desired = angle(e, chaseTarget);
+        let diff = desired - e.angle;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        e.angle += clamp(diff, -0.02, 0.02);
+      }
       e.x += Math.cos(e.angle) * e.speed;
       e.y += Math.sin(e.angle) * e.speed;
       if (Math.random() < 0.3) spawnEngineTrail(e.x - Math.cos(e.angle) * 12, e.y - Math.sin(e.angle) * 12, e.angle);
       e.fireCooldown -= dt;
       if (e.fireCooldown <= 0 && dist(e, player) < 500) {
         const a = angle(e, player);
-        enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 6, vy: Math.sin(a) * 6, life: 2, damage: e.damage });
-        e.fireCooldown = 0.8;
+        const bspd = f.style === "fast" ? 8 : 6;
+        enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * bspd, vy: Math.sin(a) * bspd, life: 2, damage: e.damage, color: f.accent });
+        e.fireCooldown = f.style === "fast" ? 0.5 : 0.8;
       }
       if (e.x < -100 || e.x > WORLD_W + 100 || e.y < -100 || e.y > WORLD_H + 100) { enemies.splice(i, 1); continue; }
     }
+
     if (e.type === "chopper") {
-      const d = dist(e, player); const a = angle(e, player);
+      const d = dist(e, chaseTarget); const a = angle(e, chaseTarget);
       e.rotorAngle += dt * 22; e.tailRotorAngle += dt * 35;
-      if (d > 200) { e.vx = lerp(e.vx, Math.cos(a) * e.speed, 0.05); e.vy = lerp(e.vy, Math.sin(a) * e.speed, 0.05); }
-      else if (d < 120) { e.vx = lerp(e.vx, -Math.cos(a) * e.speed, 0.05); e.vy = lerp(e.vy, -Math.sin(a) * e.speed, 0.05); }
-      else { e.vx = lerp(e.vx, Math.cos(a + Math.PI / 2) * e.speed * 0.5, 0.05); e.vy = lerp(e.vy, Math.sin(a + Math.PI / 2) * e.speed * 0.5, 0.05); }
+
+      if (f.style === "tactical") {
+        // Circle strafe
+        const orbitAngle = a + (e.orbitDir || 1) * Math.PI / 2;
+        if (d > 250) { e.vx = lerp(e.vx, Math.cos(a) * e.speed, 0.04); e.vy = lerp(e.vy, Math.sin(a) * e.speed, 0.04); }
+        else if (d < 150) { e.vx = lerp(e.vx, -Math.cos(a) * e.speed, 0.04); e.vy = lerp(e.vy, -Math.sin(a) * e.speed, 0.04); }
+        else { e.vx = lerp(e.vx, Math.cos(orbitAngle) * e.speed, 0.04); e.vy = lerp(e.vy, Math.sin(orbitAngle) * e.speed, 0.04); }
+      } else {
+        if (d > 200) { e.vx = lerp(e.vx, Math.cos(a) * e.speed, 0.05); e.vy = lerp(e.vy, Math.sin(a) * e.speed, 0.05); }
+        else if (d < 120) { e.vx = lerp(e.vx, -Math.cos(a) * e.speed, 0.05); e.vy = lerp(e.vy, -Math.sin(a) * e.speed, 0.05); }
+        else { e.vx = lerp(e.vx, Math.cos(a + Math.PI / 2) * e.speed * 0.5, 0.05); e.vy = lerp(e.vy, Math.sin(a + Math.PI / 2) * e.speed * 0.5, 0.05); }
+      }
       e.x = clamp(e.x + e.vx, 20, WORLD_W - 20);
       e.y = clamp(e.y + e.vy, 20, WORLD_H - 20);
       e.angle = a;
       e.fireCooldown -= dt;
-      if (e.fireCooldown <= 0 && d < 400) { enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 5, vy: Math.sin(a) * 5, life: 2.5, damage: e.damage }); e.fireCooldown = 1.2 - wantedLevel * 0.1; }
+      const fireRange = e.isBoss ? 500 : 400;
+      const fireRate = e.isBoss ? 0.5 : (1.2 - wantedLevel * 0.1);
+      if (e.fireCooldown <= 0 && dist(e, player) < fireRange) {
+        const pa = angle(e, player);
+        enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa) * 5, vy: Math.sin(pa) * 5, life: 2.5, damage: e.damage, color: FACTIONS[e.faction].accent });
+        if (e.isBoss) {
+          // Boss fires spread
+          enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa + 0.15) * 5, vy: Math.sin(pa + 0.15) * 5, life: 2.5, damage: e.damage, color: FACTIONS[e.faction].accent });
+          enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa - 0.15) * 5, vy: Math.sin(pa - 0.15) * 5, life: 2.5, damage: e.damage, color: FACTIONS[e.faction].accent });
+        }
+        e.fireCooldown = fireRate;
+      }
     }
+
+    // Enemy attacks on player rigs
     for (const rig of rigs) {
       if (rig.owner === "player" && rig.hp > 0 && dist(e, rig) < 60) {
         rig.hp -= 10 * dt;
-        if (rig.hp <= 0) { rig.owner = "neutral"; rig.hp = 0; spawnExplosion(rig.x, rig.y, "#ff8800", 25); addShake(6); }
+        rig.underAttack = true;
+        rig.attackWarning = 2.0;
+        if (rig.hp <= 0) {
+          rig.owner = "neutral"; rig.hp = 0;
+          spawnExplosion(rig.x, rig.y, "#ff8800", 25);
+          spawnFloatingText(rig.x, rig.y - 30, "RIG LOST!", "#ff4444", 16);
+          addShake(6);
+        }
+      }
+      // Enemy captures neutral rigs
+      if (rig.owner === "neutral" && rig.hp <= 0 && e.targetRig === rig && dist(e, rig) < CAPTURE_RADIUS) {
+        rig.enemyCaptureProgress += dt;
+        if (rig.enemyCaptureProgress >= CAPTURE_TIME * 2) {
+          rig.owner = "enemy"; rig.hp = rig.maxHp; rig.enemyCaptureProgress = 0;
+          spawnFloatingText(rig.x, rig.y - 30, "RIG CAPTURED BY ENEMY!", "#ff4444", 14);
+        }
       }
     }
+
     if (e.hp <= 0) {
-      spawnExplosion(e.x, e.y, "#ff4400", 18);
-      score += e.scoreValue;
-      player.oil = Math.min(OIL_MAX, player.oil + 10 * upgradeStats.oilMult);
-      spawnFloatingText(e.x, e.y - 20, "+" + e.scoreValue, "#ffcc00");
-      addShake(3);
+      spawnExplosion(e.x, e.y, FACTIONS[e.faction].accent, e.isBoss ? 30 : 18);
+      const gained = registerKill(e.scoreValue);
+      const xpGain = Math.floor((e.scoreValue * 0.5 + (e.isBoss ? 100 : 0)) * upgradeStats.xpMult);
+      addXP(xpGain);
+      player.oil = Math.min(getMaxOil(), player.oil + 8 * upgradeStats.oilMult);
+      spawnFloatingText(e.x, e.y - 20, "+" + gained, "#ffcc00");
+      spawnLoot(e.x, e.y, e);
+      addShake(e.isBoss ? 8 : 3);
       enemies.splice(i, 1);
     }
   }
 
+  // Player bullets
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     b.x += b.vx; b.y += b.vy; b.life -= dt;
@@ -523,11 +1001,13 @@ function update(dt) {
         enemies[j].hp -= b.damage;
         if (b.crit) { spawnExplosion(b.x, b.y, "#ff0000", 6); spawnFloatingText(b.x, b.y - 10, "CRIT!", "#ff4444"); }
         else spawnExplosion(b.x, b.y, "#ffcc00", 4);
-        bullets.splice(i, 1); break;
+        if (b.pierce > 0) { b.pierce--; b.damage *= 0.7; }
+        else { bullets.splice(i, 1); break; }
       }
     }
   }
 
+  // Homing missiles
   for (let i = homingMissiles.length - 1; i >= 0; i--) {
     const m = homingMissiles[i];
     m.life -= dt;
@@ -551,6 +1031,7 @@ function update(dt) {
     }
   }
 
+  // Enemy bullets
   for (let i = enemyBullets.length - 1; i >= 0; i--) {
     const b = enemyBullets[i];
     b.x += b.vx; b.y += b.vy; b.life -= dt;
@@ -558,6 +1039,40 @@ function update(dt) {
     if (dist(b, player) < 18 && player.invincible <= 0) { damagePlayer(b.damage); enemyBullets.splice(i, 1); }
   }
 
+  // Loot pickup
+  const pickR = getPickupRadius();
+  const magnetR = MAGNET_RADIUS + (hasPowerup("magnet") ? 200 : 0);
+  for (let i = loot.length - 1; i >= 0; i--) {
+    const l = loot[i];
+    l.life -= dt;
+    l.bobPhase += dt * 3;
+    if (l.life <= 0) { loot.splice(i, 1); continue; }
+    const d = dist(l, player);
+    // Magnet pull
+    if (d < magnetR && d > pickR) {
+      const a = angle(l, player);
+      const pullSpeed = 3 + (magnetR - d) / magnetR * 8;
+      l.x += Math.cos(a) * pullSpeed;
+      l.y += Math.sin(a) * pullSpeed;
+    }
+    if (d < pickR) {
+      if (l.type === "xp") {
+        addXP(Math.floor(l.value * upgradeStats.xpMult));
+        spawnFloatingText(l.x, l.y - 10, "+" + l.value + " XP", "#44ffcc", 10);
+      } else if (l.type === "oil") {
+        player.oil = Math.min(getMaxOil(), player.oil + l.value * upgradeStats.oilMult);
+        spawnFloatingText(l.x, l.y - 10, "+" + l.value + " OIL", "#888", 10);
+      } else if (l.type === "powerup") {
+        addPowerup(l.effect, l.duration);
+        spawnFloatingText(l.x, l.y - 15, l.label, l.color, 16);
+        addShake(3);
+        spawnExplosion(l.x, l.y, l.color, 10);
+      }
+      loot.splice(i, 1);
+    }
+  }
+
+  // Particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
     p.x += p.vx; p.y += p.vy; p.vx *= 0.95; p.vy *= 0.95;
@@ -566,6 +1081,7 @@ function update(dt) {
     if (p.life <= 0) particles.splice(i, 1);
   }
 
+  // Floating texts
   for (let i = floatingTexts.length - 1; i >= 0; i--) {
     floatingTexts[i].y -= 30 * dt;
     floatingTexts[i].life -= dt;
@@ -576,23 +1092,48 @@ function update(dt) {
   if (shakeAmount < 0.1) shakeAmount = 0;
   updateCamera(player);
 
+  // Upgrade check
   if (score >= nextUpgradeScore) {
     nextUpgradeScore += UPGRADE_INTERVAL + totalUpgrades * 100;
     upgradeChoices = getUpgradeChoices();
     if (upgradeChoices.length > 0) gameState = "upgrade";
   }
 
-  if (player.oil <= 0) { player.oil = 0; player.alive = false; gameState = "gameover"; spawnExplosion(player.x, player.y, "#ff2200", 40); addShake(12); }
+  // Death
+  if (player.oil <= 0) {
+    player.oil = 0; player.alive = false; gameState = "gameover";
+    spawnExplosion(player.x, player.y, "#ff2200", 40);
+    addShake(12);
+    saveHighScore(score);
+  }
 }
 
 function damagePlayer(amount) {
   if (player.invincible > 0) return;
-  if (player.shieldActive) { player.shieldActive = false; spawnExplosion(player.x, player.y, "#aa44ff", 10); spawnFloatingText(player.x, player.y - 25, "SHIELD!", "#aa44ff"); player.invincible = 0.3; return; }
-  player.oil -= amount * upgradeStats.armorMult;
+  if (player.shieldActive) {
+    player.shieldActive = false;
+    spawnExplosion(player.x, player.y, "#aa44ff", 10);
+    spawnFloatingText(player.x, player.y - 25, "SHIELD!", "#aa44ff");
+    player.invincible = 0.3;
+    return;
+  }
+  // Armor from max health stat reduces damage slightly
+  const armorMult = Math.max(0.4, 1 - stats[1] * 0.05);
+  player.oil -= amount * armorMult;
   player.invincible = 0.5;
   spawnOilSpill(player.x, player.y);
   addShake(4);
-  if (upgradeStats.hasEmp) { for (const e of enemies) { if (dist(player, e) < upgradeStats.empRadius) { e.stunTimer = 1.5; spawnExplosion(e.x, e.y, "#44ffff", 6); } } }
+  if (upgradeStats.hasEmp) {
+    for (const e of enemies) {
+      if (dist(player, e) < upgradeStats.empRadius) { e.stunTimer = 1.5; spawnExplosion(e.x, e.y, "#44ffff", 6); }
+    }
+  }
+  // Body damage to nearby enemies
+  if (stats[2] > 0) {
+    for (const e of enemies) {
+      if (dist(player, e) < 35) { e.hp -= getBodyDamage() * 0.5; spawnExplosion(e.x, e.y, "#cc66ff", 4); }
+    }
+  }
 }
 
 /* ===== DRAW ===== */
@@ -603,14 +1144,17 @@ function draw() {
   ctx.translate(-camera.x, -camera.y);
   drawWater();
   drawRigs();
+  drawLoot();
   drawShadows();
   drawEnemies();
   drawBullets();
+  drawOrbitals();
   drawPlayer();
   drawParticles();
   drawFloatingTexts();
   ctx.restore();
   drawHUD();
+  drawStatPanel();
   drawTouchControls();
 }
 
@@ -639,13 +1183,16 @@ function drawWater() {
 function drawShadows() {
   ctx.globalAlpha = 0.12; ctx.fillStyle = "#000";
   if (player.alive) { ctx.beginPath(); ctx.ellipse(player.x + 6, player.y + 10, 18, 10, 0.2, 0, Math.PI * 2); ctx.fill(); }
-  for (const e of enemies) { const r = e.type === "drone" ? 10 : e.type === "plane" ? 16 : 14; ctx.beginPath(); ctx.ellipse(e.x + 5, e.y + 8, r, r * 0.6, 0.15, 0, Math.PI * 2); ctx.fill(); }
+  for (const e of enemies) {
+    const r = e.isBoss ? 20 : e.type === "drone" ? 10 : e.type === "plane" ? 16 : 14;
+    ctx.beginPath(); ctx.ellipse(e.x + 5, e.y + 8, r, r * 0.6, 0.15, 0, Math.PI * 2); ctx.fill();
+  }
   ctx.globalAlpha = 1;
 }
 
 function drawRigs() {
   for (const rig of rigs) {
-    if (rig.hp <= 0) {
+    if (rig.hp <= 0 && rig.owner !== "enemy") {
       ctx.save(); ctx.translate(rig.x, rig.y);
       ctx.fillStyle = "#222"; ctx.fillRect(-18, -18, 36, 36);
       ctx.fillStyle = "#333"; ctx.fillRect(-12, -12, 8, 24); ctx.fillRect(2, -8, 10, 16);
@@ -659,11 +1206,12 @@ function drawRigs() {
     // Legs
     ctx.fillStyle = "#555"; ctx.fillRect(-26, -26, 4, 52); ctx.fillRect(22, -26, 4, 52); ctx.fillRect(-26, -26, 52, 4); ctx.fillRect(-26, 22, 52, 4);
     // Deck
-    ctx.fillStyle = rig.owner === "player" ? "#2a6644" : "#4a4a4a";
+    const deckColor = rig.owner === "player" ? "#2a6644" : rig.owner === "enemy" ? "#662222" : "#4a4a4a";
+    ctx.fillStyle = deckColor;
     ctx.fillRect(-22, -22, 44, 44);
     // Grid
-    ctx.strokeStyle = rig.owner === "player" ? "rgba(68,255,136,0.2)" : "rgba(255,255,255,0.1)";
-    ctx.lineWidth = 0.5;
+    const gridColor = rig.owner === "player" ? "rgba(68,255,136,0.2)" : rig.owner === "enemy" ? "rgba(255,68,68,0.2)" : "rgba(255,255,255,0.1)";
+    ctx.strokeStyle = gridColor; ctx.lineWidth = 0.5;
     for (let gx = -20; gx <= 20; gx += 10) { ctx.beginPath(); ctx.moveTo(gx, -22); ctx.lineTo(gx, 22); ctx.stroke(); }
     for (let gy = -20; gy <= 20; gy += 10) { ctx.beginPath(); ctx.moveTo(-22, gy); ctx.lineTo(22, gy); ctx.stroke(); }
     // Derrick
@@ -686,13 +1234,24 @@ function drawRigs() {
       ctx.font = "bold 8px monospace"; ctx.fillStyle = "rgba(68,255,136,0.5)"; ctx.textAlign = "center"; ctx.fillText("H", 0, 12);
       ctx.strokeStyle = "rgba(68,255,136," + (0.3 + Math.sin(time * 3) * 0.15) + ")"; ctx.lineWidth = 2; ctx.strokeRect(-24, -24, 48, 48);
     }
+    if (rig.owner === "enemy") {
+      ctx.strokeStyle = "rgba(255,68,68," + (0.3 + Math.sin(time * 3) * 0.15) + ")"; ctx.lineWidth = 2; ctx.strokeRect(-24, -24, 48, 48);
+      ctx.font = "bold 8px monospace"; ctx.fillStyle = "rgba(255,68,68,0.5)"; ctx.textAlign = "center"; ctx.fillText("E", 0, 12);
+    }
+    // Under attack warning
+    if (rig.underAttack && Math.sin(time * 8) > 0) {
+      ctx.strokeStyle = "rgba(255,0,0,0.6)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, 35, 0, Math.PI * 2); ctx.stroke();
+      ctx.font = "bold 10px monospace"; ctx.fillStyle = "#ff4444"; ctx.textAlign = "center";
+      ctx.fillText("⚠ ATTACK!", 0, -40);
+    }
     ctx.restore();
     // HP bar
-    if (rig.owner === "player") {
+    if (rig.owner === "player" || rig.owner === "enemy") {
       const bw = 44; ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(rig.x - bw / 2 - 1, rig.y + 30, bw + 2, 6);
       ctx.fillStyle = "#333"; ctx.fillRect(rig.x - bw / 2, rig.y + 31, bw, 4);
       const hp = rig.hp / rig.maxHp;
-      ctx.fillStyle = hp > 0.5 ? "#44ff88" : hp > 0.25 ? "#ffcc00" : "#ff4444";
+      ctx.fillStyle = rig.owner === "player" ? (hp > 0.5 ? "#44ff88" : hp > 0.25 ? "#ffcc00" : "#ff4444") : "#ff4444";
       ctx.fillRect(rig.x - bw / 2, rig.y + 31, bw * hp, 4);
     }
     if (rig.captureProgress > 0 && rig.owner !== "player") {
@@ -703,6 +1262,53 @@ function drawRigs() {
       ctx.font = "bold 12px monospace"; ctx.fillStyle = "#ffcc00"; ctx.textAlign = "center";
       ctx.fillText(Math.floor(rig.captureProgress / CAPTURE_TIME * 100) + "%", rig.x, rig.y - 35);
     }
+  }
+}
+
+function drawLoot() {
+  for (const l of loot) {
+    const bob = Math.sin(l.bobPhase) * 2;
+    const alpha = l.life < 3 ? l.life / 3 : 1;
+    ctx.globalAlpha = alpha * 0.3;
+    ctx.fillStyle = l.glow;
+    ctx.beginPath(); ctx.arc(l.x, l.y + bob, l.radius * 2, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = l.color;
+    if (l.type === "powerup") {
+      // Star shape for powerups
+      ctx.save(); ctx.translate(l.x, l.y + bob); ctx.rotate(time * 2);
+      ctx.beginPath();
+      for (let s = 0; s < 5; s++) {
+        const a1 = (s / 5) * Math.PI * 2 - Math.PI / 2;
+        const a2 = ((s + 0.5) / 5) * Math.PI * 2 - Math.PI / 2;
+        if (s === 0) ctx.moveTo(Math.cos(a1) * l.radius, Math.sin(a1) * l.radius);
+        else ctx.lineTo(Math.cos(a1) * l.radius, Math.sin(a1) * l.radius);
+        ctx.lineTo(Math.cos(a2) * l.radius * 0.5, Math.sin(a2) * l.radius * 0.5);
+      }
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    } else if (l.type === "oil") {
+      ctx.beginPath(); ctx.arc(l.x, l.y + bob, l.radius, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#666"; ctx.lineWidth = 1; ctx.stroke();
+    } else {
+      // XP gems - diamond shape
+      ctx.save(); ctx.translate(l.x, l.y + bob); ctx.rotate(Math.PI / 4);
+      ctx.fillRect(-l.radius * 0.6, -l.radius * 0.6, l.radius * 1.2, l.radius * 1.2);
+      ctx.restore();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawOrbitals() {
+  if (upgradeStats.orbitalCount <= 0) return;
+  for (let o = 0; o < upgradeStats.orbitalCount; o++) {
+    const oa = time * 2.5 + o * Math.PI;
+    const ox = player.x + Math.cos(oa) * 40;
+    const oy = player.y + Math.sin(oa) * 40;
+    ctx.globalAlpha = 0.3; ctx.fillStyle = "#66ccff"; ctx.beginPath(); ctx.arc(ox, oy, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.8; ctx.fillStyle = "#aaddff"; ctx.beginPath(); ctx.arc(ox, oy, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
   }
 }
 
@@ -762,64 +1368,84 @@ function drawPlayer() {
     ctx.strokeStyle = "#aa44ff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, 24, 0, Math.PI * 2); ctx.stroke();
     ctx.fillStyle = "rgba(170,68,255,0.05)"; ctx.fill(); ctx.restore();
   }
+  // Pickup radius indicator (when magnet active)
+  if (hasPowerup("magnet")) {
+    ctx.save(); ctx.translate(px, py);
+    ctx.globalAlpha = 0.08 + Math.sin(time * 4) * 0.04;
+    ctx.strokeStyle = "#ffcc00"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, 0, getPickupRadius(), 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.restore();
+  }
 }
 
 function drawEnemies() {
   for (const e of enemies) {
+    const f = FACTIONS[e.faction] || FACTIONS.red;
     if (e.stunTimer > 0) {
       ctx.save(); ctx.translate(e.x, e.y); ctx.globalAlpha = 0.3; ctx.strokeStyle = "#44ffff"; ctx.lineWidth = 1;
       for (let s = 0; s < 3; s++) { const sa = Math.random() * Math.PI * 2; const sr = rand(8, 16); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(sa) * sr, Math.sin(sa) * sr); ctx.stroke(); }
       ctx.globalAlpha = 1; ctx.restore();
     }
-    if (e.type === "drone") drawDrone(e);
-    else if (e.type === "plane") drawPlaneE(e);
-    else if (e.type === "chopper") drawChopperE(e);
+    if (e.type === "drone") drawDrone(e, f);
+    else if (e.type === "plane") drawPlaneE(e, f);
+    else if (e.type === "chopper") drawChopperE(e, f);
+    // HP bar
     if (e.hp < e.maxHp) {
-      const bw = e.type === "chopper" ? 30 : 24;
-      ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(e.x - bw / 2 - 1, e.y - 24, bw + 2, 5);
-      ctx.fillStyle = "#222"; ctx.fillRect(e.x - bw / 2, e.y - 23, bw, 3);
+      const bw = e.isBoss ? 40 : e.type === "chopper" ? 30 : 24;
+      ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(e.x - bw / 2 - 1, e.y - (e.isBoss ? 32 : 24), bw + 2, 5);
+      ctx.fillStyle = "#222"; ctx.fillRect(e.x - bw / 2, e.y - (e.isBoss ? 31 : 23), bw, 3);
       const hp = e.hp / e.maxHp;
-      ctx.fillStyle = hp > 0.5 ? "#ff6644" : "#ff2222";
-      ctx.fillRect(e.x - bw / 2, e.y - 23, bw * hp, 3);
+      ctx.fillStyle = f.accent;
+      ctx.fillRect(e.x - bw / 2, e.y - (e.isBoss ? 31 : 23), bw * hp, 3);
+    }
+    // Boss indicator
+    if (e.isBoss) {
+      ctx.globalAlpha = 0.4 + Math.sin(time * 4) * 0.2;
+      ctx.strokeStyle = f.accent; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.radius + 8, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.font = "bold 8px monospace"; ctx.fillStyle = f.accent; ctx.textAlign = "center";
+      ctx.fillText("BOSS", e.x, e.y - (e.isBoss ? 36 : 28));
     }
   }
 }
 
-function drawDrone(e) {
-  ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle);
-  ctx.strokeStyle = "#991111"; ctx.lineWidth = 2;
+function drawDrone(e, f) {
+  const scale = e.isBoss ? 1.6 : (f.style === "tanky" ? 1.3 : 1);
+  ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle); ctx.scale(scale, scale);
+  ctx.strokeStyle = f.dark; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(-9, -9); ctx.lineTo(9, 9); ctx.moveTo(9, -9); ctx.lineTo(-9, 9); ctx.stroke();
-  ctx.fillStyle = "#cc2222"; ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#dd4444"; ctx.beginPath(); ctx.arc(0, -1, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = f.body; ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = f.accent; ctx.beginPath(); ctx.arc(0, -1, 3, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = "rgba(255," + (100 + Math.sin(time * 8) * 50) + ",0,0.9)";
   ctx.beginPath(); ctx.arc(3, 0, 1.5, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
   const offsets = [[-9, -9], [9, -9], [-9, 9], [9, 9]];
   for (const [ox, oy] of offsets) {
-    const rx = e.x + Math.cos(e.angle) * ox - Math.sin(e.angle) * oy;
-    const ry = e.y + Math.sin(e.angle) * ox + Math.cos(e.angle) * oy;
+    const rx = e.x + (Math.cos(e.angle) * ox - Math.sin(e.angle) * oy) * scale;
+    const ry = e.y + (Math.sin(e.angle) * ox + Math.cos(e.angle) * oy) * scale;
     ctx.save(); ctx.translate(rx, ry); ctx.rotate(e.rotorAngle);
-    ctx.globalAlpha = 0.4; ctx.strokeStyle = "#ff6666"; ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.4; ctx.strokeStyle = f.accent; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(6, 0); ctx.stroke();
-    ctx.globalAlpha = 0.08; ctx.fillStyle = "#ff6666"; ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.08; ctx.fillStyle = f.accent; ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1; ctx.restore();
   }
 }
 
-function drawPlaneE(e) {
+function drawPlaneE(e, f) {
   ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle);
-  ctx.fillStyle = "#777";
+  ctx.fillStyle = f.body;
   ctx.beginPath(); ctx.moveTo(18, 0); ctx.bezierCurveTo(16, -3, 4, -5, -8, -4); ctx.lineTo(-14, -2); ctx.lineTo(-14, 2); ctx.lineTo(-8, 4); ctx.bezierCurveTo(4, 5, 16, 3, 18, 0); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = "#888";
+  ctx.fillStyle = lerp ? f.accent : f.body;
   ctx.beginPath(); ctx.moveTo(2, -4); ctx.lineTo(-6, -16); ctx.lineTo(-10, -16); ctx.lineTo(-4, -4); ctx.closePath(); ctx.fill();
   ctx.beginPath(); ctx.moveTo(2, 4); ctx.lineTo(-6, 16); ctx.lineTo(-10, 16); ctx.lineTo(-4, 4); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = "#cc0000"; ctx.fillRect(-9, -17, 3, 2); ctx.fillRect(-9, 15, 3, 2);
-  ctx.fillStyle = "#666";
+  ctx.fillStyle = f.accent; ctx.fillRect(-9, -17, 3, 2); ctx.fillRect(-9, 15, 3, 2);
+  ctx.fillStyle = f.dark;
   ctx.beginPath(); ctx.moveTo(-12, -2); ctx.lineTo(-16, -8); ctx.lineTo(-18, -8); ctx.lineTo(-14, -2); ctx.closePath(); ctx.fill();
   ctx.beginPath(); ctx.moveTo(-12, 2); ctx.lineTo(-16, 8); ctx.lineTo(-18, 8); ctx.lineTo(-14, 2); ctx.closePath(); ctx.fill();
   ctx.beginPath(); ctx.moveTo(-12, 0); ctx.lineTo(-17, -5); ctx.lineTo(-14, 0); ctx.closePath(); ctx.fill();
   ctx.fillStyle = "#44aadd"; ctx.beginPath(); ctx.ellipse(12, 0, 4, 2.5, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#cc0000"; ctx.fillRect(0, -1.5, 10, 3);
+  ctx.fillStyle = f.accent; ctx.fillRect(0, -1.5, 10, 3);
   ctx.globalAlpha = 0.5; ctx.fillStyle = "#ffaa44"; ctx.beginPath(); ctx.ellipse(-14, 0, 2, 1.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
   ctx.save(); ctx.translate(18, 0); ctx.rotate(e.propAngle || 0);
   ctx.globalAlpha = 0.5; ctx.strokeStyle = "#aaa"; ctx.lineWidth = 1.5;
@@ -827,30 +1453,32 @@ function drawPlaneE(e) {
   ctx.restore();
 }
 
-function drawChopperE(e) {
-  ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle);
-  ctx.fillStyle = "#6a2020"; ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(-20, -1); ctx.lineTo(-20, 1); ctx.lineTo(-6, 2); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = "#8a3030"; ctx.beginPath(); ctx.moveTo(-20, 0); ctx.lineTo(-24, -5); ctx.lineTo(-18, -1); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = "#993333";
+function drawChopperE(e, f) {
+  const scale = e.isBoss ? 1.5 : 1;
+  ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle); ctx.scale(scale, scale);
+  ctx.fillStyle = f.dark; ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(-20, -1); ctx.lineTo(-20, 1); ctx.lineTo(-6, 2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = f.body; ctx.beginPath(); ctx.moveTo(-20, 0); ctx.lineTo(-24, -5); ctx.lineTo(-18, -1); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = f.body;
   ctx.beginPath(); ctx.moveTo(14, 0); ctx.bezierCurveTo(12, -6, 4, -9, -4, -7); ctx.lineTo(-8, -4); ctx.lineTo(-6, 0); ctx.lineTo(-8, 4); ctx.lineTo(-4, 7); ctx.bezierCurveTo(4, 9, 12, 6, 14, 0); ctx.closePath(); ctx.fill();
   ctx.fillStyle = "rgba(200,100,100,0.3)"; ctx.beginPath(); ctx.ellipse(4, -2, 6, 2.5, -0.1, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#662222"; ctx.fillRect(0, -10, 6, 2.5); ctx.fillRect(0, 7.5, 6, 2.5);
+  ctx.fillStyle = f.dark; ctx.fillRect(0, -10, 6, 2.5); ctx.fillRect(0, 7.5, 6, 2.5);
   ctx.fillStyle = "#ffaa44"; ctx.beginPath(); ctx.ellipse(8, 0, 5, 3.5, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = "#cc6633"; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.ellipse(8, 0, 5, 3.5, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.strokeStyle = "#bb4444"; ctx.lineWidth = 0.8;
+  ctx.strokeStyle = f.accent; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.ellipse(8, 0, 5, 3.5, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = f.accent; ctx.lineWidth = 0.8;
   ctx.beginPath(); ctx.moveTo(14, 0); ctx.bezierCurveTo(12, -6, 4, -9, -4, -7); ctx.lineTo(-8, -4); ctx.lineTo(-6, 0); ctx.lineTo(-8, 4); ctx.lineTo(-4, 7); ctx.bezierCurveTo(4, 9, 12, 6, 14, 0); ctx.stroke();
   ctx.restore();
   // Main rotor
   ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.rotorAngle || 0);
-  ctx.globalAlpha = 0.07; ctx.fillStyle = "#ff9999"; ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 0.5; ctx.strokeStyle = "#ff8888"; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(-18, 0); ctx.lineTo(18, 0); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0, -18); ctx.lineTo(0, 18); ctx.stroke();
+  const rotorR = 18 * scale;
+  ctx.globalAlpha = 0.07; ctx.fillStyle = f.accent; ctx.beginPath(); ctx.arc(0, 0, rotorR, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 0.5; ctx.strokeStyle = f.accent; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-rotorR, 0); ctx.lineTo(rotorR, 0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, -rotorR); ctx.lineTo(0, rotorR); ctx.stroke();
   ctx.globalAlpha = 1; ctx.fillStyle = "#666"; ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
   // Tail rotor
-  ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle); ctx.translate(-20, -4); ctx.rotate(e.tailRotorAngle || 0);
-  ctx.globalAlpha = 0.4; ctx.strokeStyle = "#ff8888"; ctx.lineWidth = 1;
+  ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle); ctx.translate(-20 * scale, -4 * scale); ctx.rotate(e.tailRotorAngle || 0);
+  ctx.globalAlpha = 0.4; ctx.strokeStyle = f.accent; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(-4, 0); ctx.lineTo(4, 0); ctx.stroke(); ctx.globalAlpha = 1; ctx.restore();
 }
 
@@ -863,9 +1491,10 @@ function drawBullets() {
     ctx.restore();
   }
   for (const b of enemyBullets) {
+    const c = b.color || "#ff4444";
     ctx.save(); ctx.translate(b.x, b.y);
-    ctx.globalAlpha = 0.3; ctx.fillStyle = "#ff3333"; ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = 1; ctx.fillStyle = "#ff4444"; ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.3; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#ffaa88"; ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
@@ -900,7 +1529,7 @@ function drawParticles() {
 function drawFloatingTexts() {
   for (const ft of floatingTexts) {
     const alpha = clamp(ft.life / ft.maxLife, 0, 1);
-    ctx.globalAlpha = alpha; ctx.font = "bold 13px monospace"; ctx.textAlign = "center";
+    ctx.globalAlpha = alpha; ctx.font = "bold " + (ft.size || 13) + "px monospace"; ctx.textAlign = "center";
     ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillText(ft.text, ft.x + 1, ft.y + 1);
     ctx.fillStyle = ft.color; ctx.fillText(ft.text, ft.x, ft.y);
   }
@@ -909,12 +1538,14 @@ function drawFloatingTexts() {
 
 function drawHUD() {
   const pad = 16, barW = Math.min(240, W * 0.35), barH = 20;
-  // Panel
+  // Panel background
   ctx.fillStyle = "rgba(0,0,0,0.5)";
-  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(pad - 6, pad - 6, barW + 16, 70 + (totalUpgrades > 0 ? 18 : 0), 8); ctx.fill(); }
-  else ctx.fillRect(pad - 6, pad - 6, barW + 16, 70 + (totalUpgrades > 0 ? 18 : 0));
+  const panelH = 90 + (totalUpgrades > 0 ? 18 : 0);
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(pad - 6, pad - 6, barW + 16, panelH, 8); ctx.fill(); }
+  else ctx.fillRect(pad - 6, pad - 6, barW + 16, panelH);
+
   // Oil bar
-  const oilPct = player.oil / OIL_MAX;
+  const oilPct = player.oil / getMaxOil();
   ctx.fillStyle = "#111";
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(pad, pad, barW, barH, 4); ctx.fill(); }
   else ctx.fillRect(pad, pad, barW, barH);
@@ -923,25 +1554,58 @@ function drawHUD() {
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(pad, pad, Math.max(0, barW * oilPct), barH, 4); ctx.fill(); }
   else ctx.fillRect(pad, pad, Math.max(0, barW * oilPct), barH);
   ctx.fillStyle = "#fff"; ctx.font = "bold 12px monospace"; ctx.textAlign = "left";
-  ctx.fillText("OIL: " + Math.floor(player.oil) + " / " + OIL_MAX, pad + 4, pad + 15);
+  ctx.fillText("OIL: " + Math.floor(player.oil) + " / " + getMaxOil(), pad + 4, pad + 15);
+
+  // XP bar
+  const xpBarY = pad + barH + 4;
+  const xpPct = playerLevel >= MAX_LEVEL ? 1 : playerXP / xpForLevel(playerLevel);
+  ctx.fillStyle = "#111";
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(pad, xpBarY, barW, 10, 3); ctx.fill(); }
+  else ctx.fillRect(pad, xpBarY, barW, 10);
+  ctx.fillStyle = "#44ccaa";
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(pad, xpBarY, Math.max(0, barW * xpPct), 10, 3); ctx.fill(); }
+  else ctx.fillRect(pad, xpBarY, Math.max(0, barW * xpPct), 10);
+  ctx.fillStyle = "#fff"; ctx.font = "bold 9px monospace";
+  ctx.fillText("LVL " + playerLevel + (statPoints > 0 ? " [" + statPoints + " pts]" : "") + (playerLevel >= MAX_LEVEL ? " MAX" : ""), pad + 4, xpBarY + 8);
+
   // Score
   ctx.textAlign = "right"; ctx.font = "bold 18px monospace"; ctx.fillStyle = "#ffcc00";
   ctx.fillText("" + score, W - pad, pad + 18);
   ctx.font = "10px monospace"; ctx.fillStyle = "#aaa"; ctx.fillText("SCORE", W - pad, pad + 30);
+  if (highScore > 0) {
+    ctx.fillStyle = "#666"; ctx.font = "9px monospace";
+    ctx.fillText("BEST: " + highScore, W - pad, pad + 42);
+  }
+
+  // Combo / Streak
+  if (combo > 1) {
+    ctx.textAlign = "center"; ctx.font = "bold 16px monospace";
+    ctx.fillStyle = "rgba(255,68,255," + Math.min(1, comboTimer / COMBO_DECAY + 0.3) + ")";
+    ctx.fillText(combo + "x COMBO", W / 2, pad + 20);
+  }
+  if (killStreak >= 5) {
+    ctx.textAlign = "center"; ctx.font = "bold 12px monospace";
+    ctx.fillStyle = "rgba(255,204,0," + Math.min(1, streakTimer / STREAK_DECAY + 0.3) + ")";
+    ctx.fillText(killStreak + " STREAK", W / 2, pad + 38);
+  }
+
   // Wanted
+  let wy = pad + barH + 18;
   if (wantedLevel > 0) {
     ctx.font = "bold 14px monospace"; ctx.fillStyle = "#ff4444"; ctx.textAlign = "right";
-    let s = "WANTED "; for (let i = 0; i < wantedLevel; i++) s += "\u2605"; for (let i = wantedLevel; i < WANTED_THRESHOLDS.length - 1; i++) s += "\u2606";
-    ctx.fillText(s, W - pad, pad + 46);
+    let s = "WANTED "; for (let i = 0; i < wantedLevel; i++) s += "★"; for (let i = wantedLevel; i < WANTED_THRESHOLDS.length - 1; i++) s += "☆";
+    ctx.fillText(s, W - pad, pad + 56);
   }
+
   // Weapons
   ctx.textAlign = "left"; ctx.font = "11px monospace";
-  let wy = pad + barH + 10;
+  wy = pad + barH + 22;
   ctx.fillStyle = player.oil >= DUAL_CANNON_THRESHOLD ? "#44ff88" : "#555";
-  ctx.fillText("DUAL CANNONS" + (player.oil >= DUAL_CANNON_THRESHOLD ? " \u2713" : ""), pad, wy);
+  ctx.fillText("DUAL CANNONS" + (player.oil >= DUAL_CANNON_THRESHOLD ? " ✓" : ""), pad, wy);
   wy += 14;
   ctx.fillStyle = player.oil >= HOMING_THRESHOLD ? "#ff8844" : "#555";
-  ctx.fillText("MISSILES" + (player.oil >= HOMING_THRESHOLD ? " [E/RMB] \u2713" : " (" + HOMING_THRESHOLD + ")"), pad, wy);
+  ctx.fillText("MISSILES" + (player.oil >= HOMING_THRESHOLD ? " [E/RMB] ✓" : " (" + HOMING_THRESHOLD + ")"), pad, wy);
+
   // Upgrades
   if (totalUpgrades > 0) {
     wy += 16; ctx.font = "10px monospace"; ctx.fillStyle = "#888";
@@ -949,12 +1613,26 @@ function drawHUD() {
     for (const [k, l] of Object.entries(upgradeLevels)) { if (l > 0) ut += UPGRADES[k].icon + "x" + l + " "; }
     ctx.fillText(ut, pad, wy);
   }
+
+  // Active powerups
+  const activePows = Object.entries(activePowerups).filter(([, t]) => t > 0);
+  if (activePows.length > 0) {
+    ctx.textAlign = "center"; ctx.font = "bold 11px monospace";
+    activePows.forEach(([effect, timer], idx) => {
+      const lt = LOOT_TYPES["pow_" + effect];
+      if (!lt) return;
+      ctx.fillStyle = lt.color;
+      ctx.fillText(effect.toUpperCase() + " " + Math.ceil(timer) + "s", W / 2, H - 30 - idx * 16);
+    });
+  }
+
   // Shield
   if (upgradeStats.hasShield) {
     ctx.textAlign = "right"; ctx.font = "12px monospace";
     if (player.shieldActive) { ctx.fillStyle = "#aa44ff"; ctx.fillText("SHIELD READY", W - pad, H - 60); }
     else { ctx.fillStyle = "#555"; ctx.fillText("SHIELD " + Math.ceil(player.shieldTimer) + "s", W - pad, H - 60); }
   }
+
   // Minimap
   const mmSize = Math.min(130, W * 0.2), mmX = W - mmSize - pad, mmY = H - mmSize - pad;
   ctx.fillStyle = "rgba(0,15,30,0.75)";
@@ -964,11 +1642,18 @@ function drawHUD() {
   ctx.strokeRect(mmX - 3, mmY - 3, mmSize + 6, mmSize + 6);
   const mmScale = mmSize / WORLD_W;
   for (const rig of rigs) {
-    ctx.fillStyle = rig.hp <= 0 ? "#333" : rig.owner === "player" ? "#44ff88" : "#888";
+    ctx.fillStyle = rig.hp <= 0 ? "#333" : rig.owner === "player" ? "#44ff88" : rig.owner === "enemy" ? "#ff4444" : "#888";
     ctx.fillRect(mmX + rig.x * mmScale - 2, mmY + rig.y * mmScale - 2, rig.hp <= 0 ? 3 : 5, rig.hp <= 0 ? 3 : 5);
+    if (rig.underAttack && Math.sin(time * 6) > 0) {
+      ctx.strokeStyle = "#ff0000"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(mmX + rig.x * mmScale, mmY + rig.y * mmScale, 6, 0, Math.PI * 2); ctx.stroke();
+    }
   }
-  ctx.fillStyle = "#ff4444";
-  for (const e of enemies) ctx.fillRect(mmX + e.x * mmScale - 1, mmY + e.y * mmScale - 1, 2, 2);
+  for (const e of enemies) {
+    ctx.fillStyle = (FACTIONS[e.faction] || FACTIONS.red).accent;
+    const sz = e.isBoss ? 4 : 2;
+    ctx.fillRect(mmX + e.x * mmScale - sz / 2, mmY + e.y * mmScale - sz / 2, sz, sz);
+  }
   ctx.fillStyle = "#44ff44"; ctx.beginPath(); ctx.arc(mmX + player.x * mmScale, mmY + player.y * mmScale, 3, 0, Math.PI * 2); ctx.fill();
   // Upgrade progress
   ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.fillRect(mmX, mmY - 14, mmSize, 8);
@@ -979,9 +1664,46 @@ function drawHUD() {
   ctx.fillText("NEXT UPGRADE", mmX + mmSize / 2, mmY - 7);
 }
 
+function drawStatPanel() {
+  if (!showStatPanel || statPoints <= 0) return;
+  const panelX = 10, panelY = pad + 100;
+  const panelW = 180, rowH = 26;
+  const panelH = 8 * rowH + 30;
+
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(panelX, panelY, panelW, panelH, 8); ctx.fill(); }
+  else ctx.fillRect(panelX, panelY, panelW, panelH);
+  ctx.strokeStyle = "rgba(255,204,0,0.4)"; ctx.lineWidth = 1;
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(panelX, panelY, panelW, panelH, 8); ctx.stroke(); }
+  else ctx.strokeRect(panelX, panelY, panelW, panelH);
+
+  ctx.font = "bold 10px monospace"; ctx.fillStyle = "#ffcc00"; ctx.textAlign = "left";
+  ctx.fillText("STAT POINTS: " + statPoints + " (keys 1-8)", panelX + 8, panelY + 16);
+
+  for (let i = 0; i < 8; i++) {
+    const y = panelY + 24 + i * rowH;
+    ctx.fillStyle = STAT_COLORS[i]; ctx.font = "9px monospace"; ctx.textAlign = "left";
+    ctx.fillText("[" + (i + 1) + "] " + STAT_NAMES[i], panelX + 6, y + 10);
+    // Stat bar
+    const barX = panelX + 6, barY = y + 14, barW2 = panelW - 16, barH2 = 6;
+    ctx.fillStyle = "#222"; ctx.fillRect(barX, barY, barW2, barH2);
+    for (let s = 0; s < STAT_MAX; s++) {
+      const sx2 = barX + (s / STAT_MAX) * barW2;
+      const sw = barW2 / STAT_MAX - 1;
+      ctx.fillStyle = s < stats[i] ? STAT_COLORS[i] : "#333";
+      ctx.fillRect(sx2, barY, sw, barH2);
+    }
+  }
+}
+
 function drawTouchControls() {
   if (!("ontouchstart" in window)) return;
-  ctx.fillStyle = "rgba(255,255,255,0.03)"; ctx.fillRect(0, 0, W * 0.5, H);
+  // Left side hint
+  ctx.fillStyle = "rgba(255,255,255,0.02)"; ctx.fillRect(0, 0, W * 0.4, H);
+  // Right side hint
+  ctx.fillStyle = "rgba(255,255,255,0.01)"; ctx.fillRect(W * 0.4, 0, W * 0.6, H);
+
+  // Left joystick (movement)
   if (joystickCenter) {
     ctx.strokeStyle = "rgba(255,255,255,0.15)"; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(joystickCenter.x, joystickCenter.y, JOYSTICK_RADIUS, 0, Math.PI * 2); ctx.stroke();
@@ -990,17 +1712,43 @@ function drawTouchControls() {
     const kx = joystickCenter.x + touchMove.x * JOYSTICK_RADIUS;
     const ky = joystickCenter.y + touchMove.y * JOYSTICK_RADIUS;
     ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.beginPath(); ctx.arc(kx, ky, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.15)"; ctx.font = "9px monospace"; ctx.textAlign = "center";
+    ctx.fillText("MOVE", joystickCenter.x, joystickCenter.y + JOYSTICK_RADIUS + 16);
   }
-  const bs = 55, bx = W - bs - 30, by = H - bs - 40;
-  ctx.strokeStyle = touchFire ? "rgba(255,200,0,0.6)" : "rgba(255,255,255,0.2)"; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(bx, by, bs / 2, 0, Math.PI * 2); ctx.stroke();
-  ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.font = "bold 14px monospace"; ctx.textAlign = "center";
-  ctx.fillText("FIRE", bx, by + 5);
-  if (player.oil >= HOMING_THRESHOLD) {
-    const my2 = H * 0.35;
-    ctx.strokeStyle = touchMissile ? "rgba(255,130,0,0.6)" : "rgba(255,130,0,0.2)";
-    ctx.beginPath(); ctx.arc(bx, my2, bs / 2, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = "rgba(255,130,0,0.3)"; ctx.fillText("MSL", bx, my2 + 5);
+
+  // Right joystick (aim + fire)
+  if (aimJoystickCenter) {
+    ctx.strokeStyle = touchFire ? "rgba(255,200,0,0.4)" : "rgba(255,100,0,0.15)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(aimJoystickCenter.x, aimJoystickCenter.y, JOYSTICK_RADIUS, 0, Math.PI * 2); ctx.stroke();
+    // Missile ring
+    if (player.oil >= HOMING_THRESHOLD) {
+      ctx.strokeStyle = "rgba(255,130,0,0.15)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(aimJoystickCenter.x, aimJoystickCenter.y, JOYSTICK_RADIUS * 1.3, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = "rgba(255,130,0,0.1)"; ctx.font = "7px monospace"; ctx.textAlign = "center";
+      ctx.fillText("MSL", aimJoystickCenter.x, aimJoystickCenter.y - JOYSTICK_RADIUS * 1.3 - 4);
+    }
+    if (touchAim.active) {
+      const ax = aimJoystickCenter.x + touchAim.x * JOYSTICK_RADIUS;
+      const ay = aimJoystickCenter.y + touchAim.y * JOYSTICK_RADIUS;
+      ctx.fillStyle = touchFire ? "rgba(255,200,0,0.4)" : "rgba(255,100,0,0.25)";
+      ctx.beginPath(); ctx.arc(ax, ay, 18, 0, Math.PI * 2); ctx.fill();
+      // Crosshair
+      ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(ax - 8, ay); ctx.lineTo(ax + 8, ay); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax, ay - 8); ctx.lineTo(ax, ay + 8); ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.font = "9px monospace"; ctx.textAlign = "center";
+    ctx.fillText("AIM + FIRE", aimJoystickCenter.x, aimJoystickCenter.y + JOYSTICK_RADIUS + 16);
+  } else {
+    // Hint text when no aim joystick
+    ctx.fillStyle = "rgba(255,255,255,0.08)"; ctx.font = "12px monospace"; ctx.textAlign = "center";
+    ctx.fillText("Touch right side to aim & fire", W * 0.7, H * 0.9);
+  }
+
+  // Stat point button for mobile
+  if (statPoints > 0) {
+    ctx.fillStyle = "rgba(255,204,0,0.3)"; ctx.font = "bold 11px monospace"; ctx.textAlign = "left";
+    ctx.fillText("↑ " + statPoints + " STAT PTS (tap panel)", 14, H - 20);
   }
 }
 
@@ -1010,10 +1758,10 @@ function drawUpgradeScreen() {
   ctx.font = "bold " + Math.min(36, W * 0.06) + "px monospace";
   ctx.fillText("CHOOSE AN UPGRADE", W / 2, H * 0.15);
   ctx.fillStyle = "#aaa"; ctx.font = Math.min(14, W * 0.025) + "px monospace";
-  ctx.fillText("Score: " + score + " | Upgrades: " + totalUpgrades, W / 2, H * 0.22);
+  ctx.fillText("Score: " + score + " | Level: " + playerLevel + " | Upgrades: " + totalUpgrades, W / 2, H * 0.22);
   const cardW = Math.min(200, W * 0.28), cardH = Math.min(260, H * 0.45), gap = Math.min(30, W * 0.03);
-  const totalW = upgradeChoices.length * cardW + (upgradeChoices.length - 1) * gap;
-  const startX = (W - totalW) / 2, startY = (H - cardH) / 2;
+  const totalW2 = upgradeChoices.length * cardW + (upgradeChoices.length - 1) * gap;
+  const startX = (W - totalW2) / 2, startY = (H - cardH) / 2;
   for (let i = 0; i < upgradeChoices.length; i++) {
     const key = upgradeChoices[i], up = UPGRADES[key], lvl = upgradeLevels[key] || 0;
     const cx = startX + i * (cardW + gap), cy = startY;
@@ -1036,12 +1784,12 @@ function drawUpgradeScreen() {
     ctx.font = "bold " + Math.min(16, cardW * 0.09) + "px monospace"; ctx.fillStyle = up.color;
     ctx.fillText(up.name, cx + cardW / 2, cy + cardH * 0.42);
     ctx.font = Math.min(12, cardW * 0.07) + "px monospace"; ctx.fillStyle = "#888";
-    let dots = ""; for (let d = 0; d < up.maxLevel; d++) dots += d < lvl ? "\u25CF" : d === lvl ? "\u25C9" : "\u25CB";
+    let dots = ""; for (let d = 0; d < up.maxLevel; d++) dots += d < lvl ? "●" : d === lvl ? "◉" : "○";
     ctx.fillText(dots, cx + cardW / 2, cy + cardH * 0.52);
     ctx.font = Math.min(12, cardW * 0.065) + "px monospace"; ctx.fillStyle = "#bbb";
     ctx.fillText(up.desc, cx + cardW / 2, cy + cardH * 0.65);
     ctx.font = Math.min(11, cardW * 0.06) + "px monospace"; ctx.fillStyle = "#666";
-    ctx.fillText("Level " + lvl + " \u2192 " + (lvl + 1), cx + cardW / 2, cy + cardH * 0.78);
+    ctx.fillText("Level " + lvl + " → " + (lvl + 1), cx + cardW / 2, cy + cardH * 0.78);
     ctx.font = "bold " + Math.min(12, cardW * 0.065) + "px monospace"; ctx.fillStyle = up.color + "88";
     ctx.fillText("[ CLICK ]", cx + cardW / 2, cy + cardH * 0.9);
   }
@@ -1065,58 +1813,102 @@ function drawTitle() {
   }
   ctx.globalAlpha = 1; ctx.textAlign = "center";
   ctx.fillStyle = "#ff8800"; ctx.font = "bold " + Math.min(52, W * 0.085) + "px monospace";
-  ctx.fillText("BLACK GOLD BLITZ", W / 2, H * 0.22);
+  ctx.fillText("BLACK GOLD BLITZ", W / 2, H * 0.18);
   ctx.fillStyle = "#ffcc44"; ctx.font = Math.min(16, W * 0.03) + "px monospace";
-  ctx.fillText("TOP-DOWN ARCADE SHOOTER", W / 2, H * 0.29);
+  ctx.fillText("TOP-DOWN ARCADE SHOOTER", W / 2, H * 0.24);
+
+  // Faction colors preview
+  ctx.font = "bold " + Math.min(12, W * 0.022) + "px monospace";
+  const factionPreviewY = H * 0.28;
+  FACTION_KEYS.forEach((fk, fi) => {
+    const f = FACTIONS[fk];
+    const fx = W / 2 + (fi - 1.5) * 80;
+    ctx.fillStyle = f.accent;
+    ctx.beginPath(); ctx.arc(fx, factionPreviewY, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = f.accent; ctx.fillText(f.name, fx, factionPreviewY + 16);
+  });
+
   ctx.fillStyle = "#aaa"; ctx.font = Math.min(13, W * 0.025) + "px monospace";
   const features = [
     "WASD/Arrows - Move  |  Mouse - Aim  |  Space/LMB - Fire",
-    "E/RMB - Homing Missiles (1000+ oil)",
+    "E/RMB - Homing Missiles  |  1-8 - Allocate Stat Points",
     "",
-    "Capture oil rigs - Oil = Health + Power",
-    "Earn upgrades every 500 score - Choose abilities",
-    "Higher oil = Higher wanted = Tougher enemies",
+    "⚡ 33 STAT POINTS across 8 categories (diep.io style)",
+    "🎯 4 Enemy factions with unique AI behaviors",
+    "💎 Loot drops: XP gems, oil, power-ups",
+    "🏭 Capture & defend oil rigs from enemy raids",
     "",
-    "Touch: Left = Move  |  Right = Fire / Missile",
+    "Touch: Left stick = Move | Right stick = Aim + Fire",
   ];
-  features.forEach((l, i) => ctx.fillText(l, W / 2, H * 0.38 + i * Math.min(22, W * 0.035)));
+  features.forEach((l, i) => ctx.fillText(l, W / 2, H * 0.36 + i * Math.min(22, W * 0.032)));
+
   ctx.fillStyle = "#aa44ff"; ctx.font = "bold " + Math.min(14, W * 0.025) + "px monospace";
-  ctx.fillText("10 UNIQUE UPGRADES TO DISCOVER", W / 2, H * 0.73);
+  ctx.fillText("10 UNIQUE UPGRADES + STAT BUILDS + LOOT", W / 2, H * 0.72);
   const icons = Object.values(UPGRADES).map(u => u.icon).join("  ");
-  ctx.font = Math.min(18, W * 0.03) + "px serif"; ctx.fillText(icons, W / 2, H * 0.78);
+  ctx.font = Math.min(18, W * 0.03) + "px serif"; ctx.fillText(icons, W / 2, H * 0.77);
+
+  if (highScore > 0) {
+    ctx.fillStyle = "#ffcc00"; ctx.font = "bold " + Math.min(14, W * 0.025) + "px monospace";
+    ctx.fillText("HIGH SCORE: " + highScore, W / 2, H * 0.83);
+  }
+
   ctx.fillStyle = Math.sin(t * 3) > 0 ? "#ffcc00" : "#ff8800";
   ctx.font = "bold " + Math.min(24, W * 0.04) + "px monospace";
-  ctx.fillText("[ CLICK or TAP to START ]", W / 2, H * 0.9);
+  ctx.fillText("[ CLICK or TAP to START ]", W / 2, H * 0.92);
 }
 
 function drawGameOver() {
   ctx.fillStyle = "rgba(0,0,0,0.75)"; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
   ctx.fillStyle = "#ff3333"; ctx.font = "bold " + Math.min(52, W * 0.085) + "px monospace";
-  ctx.fillText("GAME OVER", W / 2, H * 0.28);
+  ctx.fillText("GAME OVER", W / 2, H * 0.22);
   ctx.fillStyle = "#ffcc00"; ctx.font = "bold " + Math.min(32, W * 0.055) + "px monospace";
-  ctx.fillText("FINAL SCORE: " + score, W / 2, H * 0.4);
+  ctx.fillText("FINAL SCORE: " + score, W / 2, H * 0.33);
+  if (score >= highScore && score > 0) {
+    ctx.fillStyle = "#ff8844"; ctx.font = "bold " + Math.min(18, W * 0.03) + "px monospace";
+    ctx.fillText("★ NEW HIGH SCORE! ★", W / 2, H * 0.38);
+  }
   ctx.fillStyle = "#aaa"; ctx.font = Math.min(14, W * 0.025) + "px monospace";
-  ctx.fillText("Oil Rigs: " + rigs.filter(r => r.owner === "player").length + "/" + RIG_COUNT, W / 2, H * 0.48);
-  ctx.fillText("Upgrades: " + totalUpgrades, W / 2, H * 0.53);
-  let ws = "Wanted: "; for (let i = 0; i < wantedLevel; i++) ws += "\u2605"; for (let i = wantedLevel; i < WANTED_THRESHOLDS.length - 1; i++) ws += "\u2606";
-  ctx.fillText(ws, W / 2, H * 0.58);
+  let ly = H * 0.44;
+  ctx.fillText("Level: " + playerLevel + " / " + MAX_LEVEL, W / 2, ly); ly += 22;
+  ctx.fillText("Oil Rigs: " + rigs.filter(r => r.owner === "player").length + "/" + RIG_COUNT, W / 2, ly); ly += 22;
+  ctx.fillText("Upgrades: " + totalUpgrades, W / 2, ly); ly += 22;
+  ctx.fillText("Max Combo: " + maxCombo + "x | Max Streak: " + maxStreak, W / 2, ly); ly += 22;
+
+  let ws = "Wanted: "; for (let i = 0; i < wantedLevel; i++) ws += "★"; for (let i = wantedLevel; i < WANTED_THRESHOLDS.length - 1; i++) ws += "☆";
+  ctx.fillText(ws, W / 2, ly); ly += 22;
+
+  // Stat build summary
+  ctx.fillStyle = "#888"; ctx.font = Math.min(11, W * 0.02) + "px monospace";
+  let statStr = "Build: ";
+  for (let i = 0; i < 8; i++) { if (stats[i] > 0) statStr += STAT_NAMES[i] + ":" + stats[i] + " "; }
+  ctx.fillText(statStr || "Build: (no stats allocated)", W / 2, ly); ly += 18;
+
   if (totalUpgrades > 0) {
     ctx.fillStyle = "#888"; ctx.font = Math.min(12, W * 0.022) + "px monospace";
     let ut = "Abilities: "; for (const [k, l] of Object.entries(upgradeLevels)) { if (l > 0) ut += UPGRADES[k].icon + " " + UPGRADES[k].name + " Lv" + l + "  "; }
-    ctx.fillText(ut, W / 2, H * 0.64);
+    ctx.fillText(ut, W / 2, ly);
   }
-  const t = performance.now() / 1000;
-  ctx.fillStyle = Math.sin(t * 3) > 0 ? "#ffcc00" : "#ff8800";
+
+  const t2 = performance.now() / 1000;
+  ctx.fillStyle = Math.sin(t2 * 3) > 0 ? "#ffcc00" : "#ff8800";
   ctx.font = "bold " + Math.min(22, W * 0.04) + "px monospace";
-  ctx.fillText("[ CLICK or TAP to RESTART ]", W / 2, H * 0.78);
+  ctx.fillText("[ CLICK or TAP to RESTART ]", W / 2, H * 0.88);
 }
 
 function startGame() {
   score = 0; waveTimer = 2; wantedLevel = 0; time = 0;
   enemies.length = 0; bullets.length = 0; enemyBullets.length = 0;
   homingMissiles.length = 0; particles.length = 0; floatingTexts.length = 0;
+  loot.length = 0;
   shakeAmount = 0;
+  playerLevel = 1; playerXP = 0; statPoints = 0;
+  stats = [0,0,0,0,0,0,0,0];
+  showStatPanel = true;
+  combo = 0; comboTimer = 0; killStreak = 0; streakTimer = 0;
+  maxCombo = 0; maxStreak = 0;
+  activePowerups = {};
+  rigRecaptureTimer = RIG_RECAPTURE_INTERVAL;
   resetPlayer(); resetUpgrades(); initRigs();
   gameState = "playing";
 }
