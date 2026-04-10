@@ -60,6 +60,10 @@ const COMBO_DECAY = 3.0;
 const STREAK_DECAY = 4.0;
 const BOSS_THRESHOLD = 3;
 const RIG_RECAPTURE_INTERVAL = 30;
+const DASH_COOLDOWN = 2.5;
+const DASH_SPEED = 12;
+const DASH_DURATION = 0.15;
+const DAY_NIGHT_CYCLE = 120;
 
 /* ===== STAT SYSTEM (diep.io style) ===== */
 const STAT_NAMES = [
@@ -75,6 +79,101 @@ const STAT_COLORS = [
   "#ffcc00", "#ff6644", "#ff8800", "#44ccff"
 ];
 const STAT_ICONS = ["♥", "♦", "☠", "»", "◆", "✦", "⟳", "⚡"];
+
+/* ===== SETTINGS (persisted) ===== */
+const defaultSettings = { soundOn: true, shakeOn: true, autoFire: false };
+let settings = { ...defaultSettings };
+try { const s = JSON.parse(localStorage.getItem("bgb_settings")); if (s) settings = { ...defaultSettings, ...s }; } catch(e) {}
+function saveSettings() { try { localStorage.setItem("bgb_settings", JSON.stringify(settings)); } catch(e) {} }
+
+/* ===== PROCEDURAL SOUND (Web Audio API) ===== */
+let audioCtx = null;
+function initAudio() {
+  if (audioCtx) return;
+  try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+}
+
+function playSound(type, vol) {
+  if (!audioCtx || !settings.soundOn) return;
+  vol = vol || 0.3;
+  const now = audioCtx.currentTime;
+  try {
+    if (type === "shoot") {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "square"; osc.frequency.setValueAtTime(800, now); osc.frequency.exponentialRampToValueAtTime(200, now + 0.08);
+      gain.gain.setValueAtTime(vol * 0.15, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.08);
+    } else if (type === "explosion") {
+      const bufferSize = audioCtx.sampleRate * 0.3;
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+      const source = audioCtx.createBufferSource();
+      const gain = audioCtx.createGain();
+      source.buffer = buffer;
+      gain.gain.setValueAtTime(vol * 0.4, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = "lowpass"; filter.frequency.setValueAtTime(600, now); filter.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+      source.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+      source.start(now);
+    } else if (type === "pickup") {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine"; osc.frequency.setValueAtTime(600, now); osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+      gain.gain.setValueAtTime(vol * 0.12, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.12);
+    } else if (type === "levelup") {
+      [0, 0.08, 0.16].forEach((delay, idx) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine"; osc.frequency.setValueAtTime(500 + idx * 200, now + delay);
+        gain.gain.setValueAtTime(vol * 0.15, now + delay); gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.15);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(now + delay); osc.stop(now + delay + 0.15);
+      });
+    } else if (type === "hit") {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sawtooth"; osc.frequency.setValueAtTime(150, now); osc.frequency.exponentialRampToValueAtTime(60, now + 0.12);
+      gain.gain.setValueAtTime(vol * 0.2, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.12);
+    } else if (type === "missile") {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sawtooth"; osc.frequency.setValueAtTime(300, now); osc.frequency.exponentialRampToValueAtTime(100, now + 0.4);
+      gain.gain.setValueAtTime(vol * 0.12, now); gain.gain.linearRampToValueAtTime(0, now + 0.4);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.4);
+    } else if (type === "dash") {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine"; osc.frequency.setValueAtTime(400, now); osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+      gain.gain.setValueAtTime(vol * 0.1, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + 0.1);
+    } else if (type === "powerup") {
+      [0, 0.05, 0.1, 0.15].forEach((delay, idx) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine"; osc.frequency.setValueAtTime(400 + idx * 150, now + delay);
+        gain.gain.setValueAtTime(vol * 0.1, now + delay); gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.12);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(now + delay); osc.stop(now + delay + 0.12);
+      });
+    }
+  } catch(e) {}
+}
+
+let lastCritSoundTime = 0;
+
+/* ===== SCREEN EFFECTS ===== */
+let screenFlash = { color: "", alpha: 0 };
+function addScreenFlash(color, alpha) { screenFlash.color = color; screenFlash.alpha = alpha; }
+let vignetteIntensity = 0;
 
 /* ===== FACTION COLORS ===== */
 const FACTIONS = {
@@ -120,7 +219,7 @@ function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 /* ===== SCREEN SHAKE ===== */
 let shakeAmount = 0;
-function addShake(amount) { shakeAmount = Math.min(shakeAmount + amount, 15); }
+function addShake(amount) { if (settings.shakeOn) shakeAmount = Math.min(shakeAmount + amount, 15); }
 
 /* ===== HIGH SCORES ===== */
 let highScore = 0;
@@ -129,7 +228,12 @@ function saveHighScore(s) { if (s > highScore) { highScore = s; try { localStora
 
 /* ===== INPUT ===== */
 const keys = {};
-window.addEventListener("keydown", e => { keys[e.code] = true; if (gameState === "playing" && e.key >= "1" && e.key <= "8") { allocateStat(parseInt(e.key) - 1); } });
+window.addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (gameState === "playing" && e.key >= "1" && e.key <= "8") { allocateStat(parseInt(e.key) - 1); }
+  if (e.code === "KeyP" || e.code === "Escape") { togglePause(); }
+  if (e.code === "KeyF") { settings.autoFire = !settings.autoFire; saveSettings(); }
+});
 window.addEventListener("keyup", e => { keys[e.code] = false; });
 
 let touchMove = { x: 0, y: 0, active: false };
@@ -149,7 +253,43 @@ function handleTouch(e) {
   e.preventDefault();
   if (gameState === "upgrade") { handleUpgradeTouch(e); return; }
   if (gameState === "playing" && showStatPanel) { handleStatTouch(e); return; }
+  if (gameState === "paused") { return; }
   if (gameState !== "playing") return;
+
+  // Check mobile buttons first (constants shared with drawTouchControls)
+  const MOBILE_BTN_SIZE = 36;
+  const MOBILE_BTN_Y = H - MOBILE_BTN_SIZE - 50;
+  const DASH_BTN_X = 20;
+  const AF_BTN_X = 70;
+  const PAUSE_BTN_X = W - 50;
+  const PAUSE_BTN_Y = 10;
+  const PAUSE_BTN_SIZE = 30;
+
+  for (const t of e.changedTouches) {
+    // Pause button (top-right)
+    if (t.clientX > PAUSE_BTN_X && t.clientY < PAUSE_BTN_Y + PAUSE_BTN_SIZE && e.type === "touchstart") {
+      togglePause(); return;
+    }
+    // Dash button
+    if (t.clientX >= DASH_BTN_X && t.clientX <= DASH_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE && e.type === "touchstart") {
+      if (player.dashCooldown <= 0 && touchMove.active) {
+        const dashA = Math.atan2(touchMove.y, touchMove.x);
+        player.dashing = DASH_DURATION;
+        player.dashAngle = dashA;
+        player.dashCooldown = DASH_COOLDOWN;
+        playSound("dash");
+        addScreenFlash("#44ccff", 0.1);
+      }
+      return;
+    }
+    // Auto-fire toggle
+    if (t.clientX >= AF_BTN_X && t.clientX <= AF_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE && e.type === "touchstart") {
+      settings.autoFire = !settings.autoFire;
+      saveSettings();
+      return;
+    }
+  }
+
   touchFire = false;
   touchMissile = false;
   for (const t of e.touches) {
@@ -310,6 +450,8 @@ function addXP(amount) {
     spawnLevelUpEffect(player.x, player.y);
     spawnFloatingText(player.x, player.y - 35, "LEVEL " + playerLevel + "!", "#ffcc00", 18);
     addShake(3);
+    addScreenFlash("#ffcc00", 0.15);
+    playSound("levelup");
   }
   if (playerLevel >= MAX_LEVEL) playerXP = 0;
 }
@@ -450,6 +592,16 @@ let waveTimer = 0;
 let wantedLevel = 0;
 let time = 0;
 let rigRecaptureTimer = RIG_RECAPTURE_INTERVAL;
+let paused = false;
+let timeSurvived = 0;
+let totalKills = { drone: 0, plane: 0, chopper: 0, boss: 0 };
+let totalDamageTaken = 0;
+let totalDamageDealt = 0;
+
+function togglePause() {
+  if (gameState === "playing") { paused = true; gameState = "paused"; }
+  else if (gameState === "paused") { paused = false; gameState = "playing"; }
+}
 
 /* ===== COMPUTED STATS (from diep.io points) ===== */
 function getMaxOil() { return OIL_BASE_MAX + stats[1] * 120; }
@@ -469,6 +621,7 @@ const player = {
   fireCooldown: 0, homingCooldown: 0, invincible: 0,
   rotorAngle: 0, tailRotorAngle: 0, alive: true,
   engineGlow: 0, shieldActive: false, shieldTimer: 0,
+  dashCooldown: 0, dashing: 0, dashAngle: 0,
 };
 
 function resetPlayer() {
@@ -478,6 +631,7 @@ function resetPlayer() {
     fireCooldown: 0, homingCooldown: 0, invincible: 0,
     rotorAngle: 0, tailRotorAngle: 0, alive: true,
     engineGlow: 0, shieldActive: false, shieldTimer: 0,
+    dashCooldown: 0, dashing: 0, dashAngle: 0,
   });
 }
 
@@ -511,6 +665,7 @@ function fireBullet() {
     }
     spawnMuzzleFlash(bx, by, player.angle);
   }
+  playSound("shoot");
 }
 
 function fireHoming() {
@@ -522,6 +677,7 @@ function fireHoming() {
     speed: HOMING_SPEED * upgradeStats.missileSpeedMult, target,
     life: 4, damage: 80 * upgradeStats.missileDmgMult,
   });
+  playSound("missile");
   return true;
 }
 
@@ -725,11 +881,15 @@ function updateRigRecapture(dt) {
 /* ===== UPDATE ===== */
 function update(dt) {
   time += dt;
+  timeSurvived += dt;
   // Combo/streak decay
   comboTimer -= dt; if (comboTimer <= 0) { combo = 0; comboTimer = 0; }
   streakTimer -= dt; if (streakTimer <= 0) { killStreak = 0; streakTimer = 0; }
   // Powerup timers
   for (const k in activePowerups) { activePowerups[k] -= dt; if (activePowerups[k] <= 0) delete activePowerups[k]; }
+  // Screen effects decay
+  screenFlash.alpha *= 0.92; if (screenFlash.alpha < 0.01) screenFlash.alpha = 0;
+  vignetteIntensity *= 0.95; if (vignetteIntensity < 0.01) vignetteIntensity = 0;
 
   // Player movement
   let ix = 0, iy = 0;
@@ -740,9 +900,33 @@ function update(dt) {
   if (touchMove.active) { ix = touchMove.x; iy = touchMove.y; }
   const inputLen = Math.hypot(ix, iy);
   if (inputLen > 0.01) { ix /= inputLen; iy /= inputLen; }
-  const speed = Math.max(1, getMoveSpeed() - (player.oil / getMaxOil()) * 1.2);
-  player.vx = lerp(player.vx, ix * speed, 0.15);
-  player.vy = lerp(player.vy, iy * speed, 0.15);
+
+  // Dash mechanic
+  player.dashCooldown -= dt;
+  if (player.dashing > 0) {
+    player.dashing -= dt;
+    const dashSpd = DASH_SPEED;
+    player.vx = Math.cos(player.dashAngle) * dashSpd;
+    player.vy = Math.sin(player.dashAngle) * dashSpd;
+    player.invincible = Math.max(player.invincible, 0.05);
+    // Dash trail particles
+    for (let i = 0; i < 2; i++) {
+      spawnParticle(player.x + rand(-5, 5), player.y + rand(-5, 5), rand(-1, 1), rand(-1, 1), rand(0.1, 0.3), rand(2, 5), "#44ccff", "fire");
+    }
+  } else {
+    const speed = Math.max(1, getMoveSpeed() - (player.oil / getMaxOil()) * 1.2);
+    player.vx = lerp(player.vx, ix * speed, 0.15);
+    player.vy = lerp(player.vy, iy * speed, 0.15);
+  }
+  // Trigger dash
+  if ((keys["ShiftLeft"] || keys["ShiftRight"]) && player.dashCooldown <= 0 && inputLen > 0.1 && player.dashing <= 0) {
+    player.dashing = DASH_DURATION;
+    player.dashAngle = Math.atan2(iy, ix);
+    player.dashCooldown = DASH_COOLDOWN;
+    playSound("dash");
+    addScreenFlash("#44ccff", 0.1);
+  }
+
   player.x = clamp(player.x + player.vx, 20, WORLD_W - 20);
   player.y = clamp(player.y + player.vy, 20, WORLD_H - 20);
   player.engineGlow = lerp(player.engineGlow, inputLen > 0.1 ? 1 : 0.2, 0.1);
@@ -775,7 +959,7 @@ function update(dt) {
   // Firing
   player.fireCooldown -= dt;
   player.homingCooldown -= dt;
-  const wantFire = keys["Space"] || mouseDown || touchFire;
+  const wantFire = keys["Space"] || mouseDown || touchFire || settings.autoFire;
   const wantMissile = keys["KeyE"] || rightMouseDown || touchMissile;
   if (wantFire && player.fireCooldown <= 0) { fireBullet(); player.fireCooldown = getReloadTime(); }
   if (wantMissile && player.homingCooldown <= 0 && player.oil >= HOMING_THRESHOLD) { if (fireHoming()) player.homingCooldown = HOMING_COOLDOWN_MS / 1000; }
@@ -987,6 +1171,10 @@ function update(dt) {
       spawnFloatingText(e.x, e.y - 20, "+" + gained, "#ffcc00");
       spawnLoot(e.x, e.y, e);
       addShake(e.isBoss ? 8 : 3);
+      playSound("explosion", e.isBoss ? 0.5 : 0.3);
+      totalDamageDealt += e.maxHp;
+      if (e.isBoss) totalKills.boss++;
+      else totalKills[e.type] = (totalKills[e.type] || 0) + 1;
       enemies.splice(i, 1);
     }
   }
@@ -999,7 +1187,7 @@ function update(dt) {
     for (let j = enemies.length - 1; j >= 0; j--) {
       if (dist(b, enemies[j]) < enemies[j].radius + 6) {
         enemies[j].hp -= b.damage;
-        if (b.crit) { spawnExplosion(b.x, b.y, "#ff0000", 6); spawnFloatingText(b.x, b.y - 10, "CRIT!", "#ff4444"); }
+        if (b.crit) { spawnExplosion(b.x, b.y, "#ff0000", 6); spawnFloatingText(b.x, b.y - 10, "CRIT!", "#ff4444"); if (time - lastCritSoundTime > 0.15) { playSound("explosion", 0.15); lastCritSoundTime = time; } }
         else spawnExplosion(b.x, b.y, "#ffcc00", 4);
         if (b.pierce > 0) { b.pierce--; b.damage *= 0.7; }
         else { bullets.splice(i, 1); break; }
@@ -1027,7 +1215,7 @@ function update(dt) {
       spawnParticle(tx + rand(-2, 2), ty + rand(-2, 2), rand(-0.5, 0.5), rand(-0.5, 0.5), rand(0.1, 0.3), rand(2, 4), t === 0 ? "#ff6600" : "#ff3300", "fire");
     }
     for (let j = enemies.length - 1; j >= 0; j--) {
-      if (dist(m, enemies[j]) < enemies[j].radius + 10) { enemies[j].hp -= m.damage; spawnExplosion(m.x, m.y, "#ff8800", 15); addShake(5); homingMissiles.splice(i, 1); break; }
+      if (dist(m, enemies[j]) < enemies[j].radius + 10) { enemies[j].hp -= m.damage; spawnExplosion(m.x, m.y, "#ff8800", 15); addShake(5); playSound("explosion", 0.4); homingMissiles.splice(i, 1); break; }
     }
   }
 
@@ -1059,14 +1247,18 @@ function update(dt) {
       if (l.type === "xp") {
         addXP(Math.floor(l.value * upgradeStats.xpMult));
         spawnFloatingText(l.x, l.y - 10, "+" + l.value + " XP", "#44ffcc", 10);
+        playSound("pickup", 0.15);
       } else if (l.type === "oil") {
         player.oil = Math.min(getMaxOil(), player.oil + l.value * upgradeStats.oilMult);
         spawnFloatingText(l.x, l.y - 10, "+" + l.value + " OIL", "#888", 10);
+        playSound("pickup", 0.15);
       } else if (l.type === "powerup") {
         addPowerup(l.effect, l.duration);
         spawnFloatingText(l.x, l.y - 15, l.label, l.color, 16);
         addShake(3);
         spawnExplosion(l.x, l.y, l.color, 10);
+        playSound("powerup", 0.3);
+        addScreenFlash(l.color, 0.12);
       }
       loot.splice(i, 1);
     }
@@ -1104,6 +1296,8 @@ function update(dt) {
     player.oil = 0; player.alive = false; gameState = "gameover";
     spawnExplosion(player.x, player.y, "#ff2200", 40);
     addShake(12);
+    addScreenFlash("#ff0000", 0.4);
+    playSound("explosion", 0.6);
     saveHighScore(score);
   }
 }
@@ -1115,14 +1309,21 @@ function damagePlayer(amount) {
     spawnExplosion(player.x, player.y, "#aa44ff", 10);
     spawnFloatingText(player.x, player.y - 25, "SHIELD!", "#aa44ff");
     player.invincible = 0.3;
+    playSound("hit");
+    addScreenFlash("#aa44ff", 0.1);
     return;
   }
   // Armor from max health stat reduces damage slightly
   const armorMult = Math.max(0.4, 1 - stats[1] * 0.05);
-  player.oil -= amount * armorMult;
+  const actualDmg = amount * armorMult;
+  player.oil -= actualDmg;
+  totalDamageTaken += actualDmg;
   player.invincible = 0.5;
   spawnOilSpill(player.x, player.y);
   addShake(4);
+  playSound("hit");
+  addScreenFlash("#ff0000", 0.15);
+  vignetteIntensity = Math.min(0.5, vignetteIntensity + 0.2);
   if (upgradeStats.hasEmp) {
     for (const e of enemies) {
       if (dist(player, e) < upgradeStats.empRadius) { e.stunTimer = 1.5; spawnExplosion(e.x, e.y, "#44ffff", 6); }
@@ -1156,26 +1357,83 @@ function draw() {
   drawHUD();
   drawStatPanel();
   drawTouchControls();
+  drawScreenEffects();
+}
+
+function drawScreenEffects() {
+  // Screen flash
+  if (screenFlash.alpha > 0.01) {
+    ctx.globalAlpha = screenFlash.alpha;
+    ctx.fillStyle = screenFlash.color;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+  // Damage vignette
+  if (vignetteIntensity > 0.01) {
+    const grad = ctx.createRadialGradient(W / 2, H / 2, W * 0.3, W / 2, H / 2, W * 0.7);
+    grad.addColorStop(0, "rgba(0,0,0,0)");
+    grad.addColorStop(1, "rgba(180,0,0," + vignetteIntensity + ")");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+  }
+  // Dash cooldown indicator
+  if (player.dashCooldown > 0 && player.alive) {
+    const dashPct = 1 - player.dashCooldown / DASH_COOLDOWN;
+    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    ctx.fillRect(W / 2 - 30, H - 18, 60, 8);
+    ctx.fillStyle = dashPct >= 1 ? "#44ccff" : "#225577";
+    ctx.fillRect(W / 2 - 30, H - 18, 60 * dashPct, 8);
+    ctx.font = "7px monospace"; ctx.fillStyle = "#88ccff"; ctx.textAlign = "center";
+    ctx.fillText("DASH [SHIFT]", W / 2, H - 22);
+  } else if (player.alive) {
+    ctx.font = "7px monospace"; ctx.fillStyle = "rgba(68,204,255,0.5)"; ctx.textAlign = "center";
+    ctx.fillText("DASH READY [SHIFT]", W / 2, H - 10);
+  }
 }
 
 function drawWater() {
+  // Day/night cycle
+  const dayPhase = (time % DAY_NIGHT_CYCLE) / DAY_NIGHT_CYCLE;
+  const dayBrightness = 0.7 + 0.3 * Math.cos(dayPhase * Math.PI * 2);
+  const nightTint = Math.max(0, Math.sin(dayPhase * Math.PI * 2 - Math.PI) * 0.3);
+
   const sx = Math.floor(camera.x / TILE), sy = Math.floor(camera.y / TILE);
   const ex = Math.ceil((camera.x + W) / TILE), ey = Math.ceil((camera.y + H) / TILE);
+  // Pre-calculate day/night multipliers
+  const rMult = dayBrightness;
+  const rOffset = nightTint * 0.1 * 255;
+  const gMult = dayBrightness;
+  const bMult = dayBrightness;
+  const bOffset = nightTint * 0.15 * 255;
   for (let y = sy; y <= ey; y++) {
     for (let x = sx; x <= ex; x++) {
       const w = Math.sin(time * 1.5 + x * 0.5 + y * 0.3) * 0.02;
       const base = (x + y) % 2 === 0 ? 0.15 : 0.18;
-      ctx.fillStyle = "rgb(" + clamp(Math.floor((0.04 + w) * 255), 0, 255) + "," + clamp(Math.floor((base + w) * 255), 0, 255) + "," + clamp(Math.floor((0.35 + base + w) * 255), 0, 255) + ")";
+      const r = clamp(Math.floor((0.04 + w) * rMult * 255 + rOffset), 0, 255);
+      const g = clamp(Math.floor((base + w) * gMult * 255), 0, 255);
+      const b = clamp(Math.floor((0.35 + base + w) * bMult * 255 + bOffset), 0, 255);
+      ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
       ctx.fillRect(x * TILE, y * TILE, TILE + 1, TILE + 1);
     }
   }
-  ctx.globalAlpha = 0.06; ctx.fillStyle = "#88ccff";
+  ctx.globalAlpha = 0.06 * dayBrightness; ctx.fillStyle = "#88ccff";
   for (let y = sy; y <= ey; y += 2) { ctx.fillRect(sx * TILE + Math.sin(time * 2 + y * 0.4) * 20, y * TILE, (ex - sx) * TILE, 3); }
   ctx.globalAlpha = 0.04;
   for (let i = 0; i < 12; i++) {
     const cx2 = camera.x + (Math.sin(time * 0.3 + i * 2.1) * 0.5 + 0.5) * W;
     const cy2 = camera.y + (Math.cos(time * 0.2 + i * 1.7) * 0.5 + 0.5) * H;
     ctx.fillStyle = "#aaddff"; ctx.beginPath(); ctx.arc(cx2, cy2, 30 + Math.sin(time + i) * 15, 0, Math.PI * 2); ctx.fill();
+  }
+  // Night stars
+  if (nightTint > 0.05) {
+    ctx.globalAlpha = nightTint * 0.8;
+    for (let i = 0; i < 20; i++) {
+      const starX = camera.x + ((i * 137.5 + 50) % W);
+      const starY = camera.y + ((i * 97.3 + 30) % H);
+      const twinkle = 0.5 + Math.sin(time * 2 + i * 1.3) * 0.5;
+      ctx.fillStyle = "rgba(255,255,220," + twinkle + ")";
+      ctx.beginPath(); ctx.arc(starX, starY, 1 + twinkle, 0, Math.PI * 2); ctx.fill();
+    }
   }
   ctx.globalAlpha = 1;
 }
@@ -1315,8 +1573,20 @@ function drawOrbitals() {
 function drawPlayer() {
   if (!player.alive) return;
   const px = player.x, py = player.y, a = player.angle;
+  // Dash afterimage effect
+  if (player.dashing > 0) {
+    ctx.globalAlpha = 0.15;
+    for (let g = 1; g <= 3; g++) {
+      const gx = px - Math.cos(player.dashAngle) * g * 8;
+      const gy = py - Math.sin(player.dashAngle) * g * 8;
+      ctx.fillStyle = "#44ccff";
+      ctx.beginPath(); ctx.arc(gx, gy, 12 - g * 2, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
   ctx.save(); ctx.translate(px, py); ctx.rotate(a);
   if (player.invincible > 0 && Math.sin(time * 30) > 0) ctx.globalAlpha = 0.4;
+  if (player.dashing > 0) ctx.globalAlpha = 0.7;
   // Tail
   ctx.fillStyle = "#1a4a1a";
   ctx.beginPath(); ctx.moveTo(-8, -2.5); ctx.lineTo(-22, -1.5); ctx.lineTo(-22, 1.5); ctx.lineTo(-8, 2.5); ctx.closePath(); ctx.fill();
@@ -1576,6 +1846,11 @@ function drawHUD() {
     ctx.fillStyle = "#666"; ctx.font = "9px monospace";
     ctx.fillText("BEST: " + highScore, W - pad, pad + 42);
   }
+  // Time survived
+  ctx.fillStyle = "#777"; ctx.font = "9px monospace"; ctx.textAlign = "right";
+  const mins = Math.floor(timeSurvived / 60);
+  const secs = Math.floor(timeSurvived % 60);
+  ctx.fillText("TIME: " + mins + ":" + (secs < 10 ? "0" : "") + secs, W - pad, pad + 54);
 
   // Combo / Streak
   if (combo > 1) {
@@ -1605,6 +1880,9 @@ function drawHUD() {
   wy += 14;
   ctx.fillStyle = player.oil >= HOMING_THRESHOLD ? "#ff8844" : "#555";
   ctx.fillText("MISSILES" + (player.oil >= HOMING_THRESHOLD ? " [E/RMB] ✓" : " (" + HOMING_THRESHOLD + ")"), pad, wy);
+  wy += 14;
+  ctx.fillStyle = settings.autoFire ? "#44ff88" : "#555";
+  ctx.fillText("AUTO-FIRE [F]" + (settings.autoFire ? " ON" : " OFF"), pad, wy);
 
   // Upgrades
   if (totalUpgrades > 0) {
@@ -1745,6 +2023,38 @@ function drawTouchControls() {
     ctx.fillText("Touch right side to aim & fire", W * 0.7, H * 0.9);
   }
 
+  // Mobile buttons: Dash + Auto-fire + Pause
+  const btnSize = 36;
+  const btnY = H - btnSize - 50;
+
+  // Dash button (bottom-left area)
+  const dashBtnX = 20;
+  const dashReady = player.dashCooldown <= 0;
+  ctx.fillStyle = dashReady ? "rgba(68,204,255,0.3)" : "rgba(68,204,255,0.1)";
+  ctx.beginPath(); ctx.arc(dashBtnX + btnSize / 2, btnY + btnSize / 2, btnSize / 2, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = dashReady ? "rgba(68,204,255,0.6)" : "rgba(68,204,255,0.2)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(dashBtnX + btnSize / 2, btnY + btnSize / 2, btnSize / 2, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = dashReady ? "#44ccff" : "#335566"; ctx.font = "bold 10px monospace"; ctx.textAlign = "center";
+  ctx.fillText("DASH", dashBtnX + btnSize / 2, btnY + btnSize / 2 + 4);
+
+  // Auto-fire toggle (bottom-center-left)
+  const afBtnX = 70;
+  ctx.fillStyle = settings.autoFire ? "rgba(68,255,136,0.3)" : "rgba(100,100,100,0.2)";
+  ctx.beginPath(); ctx.arc(afBtnX + btnSize / 2, btnY + btnSize / 2, btnSize / 2, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = settings.autoFire ? "rgba(68,255,136,0.6)" : "rgba(100,100,100,0.3)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(afBtnX + btnSize / 2, btnY + btnSize / 2, btnSize / 2, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = settings.autoFire ? "#44ff88" : "#666"; ctx.font = "bold 8px monospace"; ctx.textAlign = "center";
+  ctx.fillText("AUTO", afBtnX + btnSize / 2, btnY + btnSize / 2 + 4);
+
+  // Pause button (top-right)
+  const pauseBtnX = W - 50, pauseBtnY = 10, pauseBtnSize = 30;
+  ctx.fillStyle = "rgba(255,255,255,0.1)";
+  ctx.fillRect(pauseBtnX, pauseBtnY, pauseBtnSize, pauseBtnSize);
+  ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 1;
+  ctx.strokeRect(pauseBtnX, pauseBtnY, pauseBtnSize, pauseBtnSize);
+  ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.font = "bold 14px monospace"; ctx.textAlign = "center";
+  ctx.fillText("⏸", pauseBtnX + pauseBtnSize / 2, pauseBtnY + pauseBtnSize / 2 + 5);
+
   // Stat point button for mobile
   if (statPoints > 0) {
     ctx.fillStyle = "rgba(255,204,0,0.3)"; ctx.font = "bold 11px monospace"; ctx.textAlign = "left";
@@ -1832,11 +2142,13 @@ function drawTitle() {
   const features = [
     "WASD/Arrows - Move  |  Mouse - Aim  |  Space/LMB - Fire",
     "E/RMB - Homing Missiles  |  1-8 - Allocate Stat Points",
+    "Shift - Dash Dodge  |  F - Auto-Fire  |  P - Pause",
     "",
     "⚡ 33 STAT POINTS across 8 categories (diep.io style)",
     "🎯 4 Enemy factions with unique AI behaviors",
     "💎 Loot drops: XP gems, oil, power-ups",
     "🏭 Capture & defend oil rigs from enemy raids",
+    "🌅 Dynamic day/night cycle  |  🔊 Procedural sound",
     "",
     "Touch: Left stick = Move | Right stick = Aim + Fire",
   ];
@@ -1861,28 +2173,45 @@ function drawGameOver() {
   ctx.fillStyle = "rgba(0,0,0,0.75)"; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = "center";
   ctx.fillStyle = "#ff3333"; ctx.font = "bold " + Math.min(52, W * 0.085) + "px monospace";
-  ctx.fillText("GAME OVER", W / 2, H * 0.22);
+  ctx.fillText("GAME OVER", W / 2, H * 0.15);
   ctx.fillStyle = "#ffcc00"; ctx.font = "bold " + Math.min(32, W * 0.055) + "px monospace";
-  ctx.fillText("FINAL SCORE: " + score, W / 2, H * 0.33);
+  ctx.fillText("FINAL SCORE: " + score, W / 2, H * 0.24);
   if (score >= highScore && score > 0) {
     ctx.fillStyle = "#ff8844"; ctx.font = "bold " + Math.min(18, W * 0.03) + "px monospace";
-    ctx.fillText("★ NEW HIGH SCORE! ★", W / 2, H * 0.38);
+    ctx.fillText("★ NEW HIGH SCORE! ★", W / 2, H * 0.29);
   }
+
+  // Time survived
+  const mins = Math.floor(timeSurvived / 60);
+  const secs = Math.floor(timeSurvived % 60);
+  ctx.fillStyle = "#88ccff"; ctx.font = "bold " + Math.min(16, W * 0.028) + "px monospace";
+  ctx.fillText("TIME SURVIVED: " + mins + ":" + (secs < 10 ? "0" : "") + secs, W / 2, H * 0.34);
+
   ctx.fillStyle = "#aaa"; ctx.font = Math.min(14, W * 0.025) + "px monospace";
-  let ly = H * 0.44;
-  ctx.fillText("Level: " + playerLevel + " / " + MAX_LEVEL, W / 2, ly); ly += 22;
-  ctx.fillText("Oil Rigs: " + rigs.filter(r => r.owner === "player").length + "/" + RIG_COUNT, W / 2, ly); ly += 22;
-  ctx.fillText("Upgrades: " + totalUpgrades, W / 2, ly); ly += 22;
-  ctx.fillText("Max Combo: " + maxCombo + "x | Max Streak: " + maxStreak, W / 2, ly); ly += 22;
+  let ly = H * 0.40;
+  ctx.fillText("Level: " + playerLevel + " / " + MAX_LEVEL, W / 2, ly); ly += 20;
+  ctx.fillText("Oil Rigs: " + rigs.filter(r => r.owner === "player").length + "/" + RIG_COUNT, W / 2, ly); ly += 20;
+  ctx.fillText("Upgrades: " + totalUpgrades, W / 2, ly); ly += 20;
+  ctx.fillText("Max Combo: " + maxCombo + "x | Max Streak: " + maxStreak, W / 2, ly); ly += 20;
+
+  // Kill breakdown
+  const totalKillCount = totalKills.drone + totalKills.plane + totalKills.chopper + totalKills.boss;
+  ctx.fillStyle = "#ff8844"; ctx.font = "bold " + Math.min(13, W * 0.023) + "px monospace";
+  ctx.fillText("KILLS: " + totalKillCount, W / 2, ly); ly += 18;
+  ctx.fillStyle = "#888"; ctx.font = Math.min(11, W * 0.02) + "px monospace";
+  ctx.fillText("Drones: " + totalKills.drone + " | Planes: " + totalKills.plane + " | Choppers: " + totalKills.chopper + " | Bosses: " + totalKills.boss, W / 2, ly); ly += 18;
+
+  // Damage stats
+  ctx.fillText("Damage Dealt: " + Math.floor(totalDamageDealt) + " | Damage Taken: " + Math.floor(totalDamageTaken), W / 2, ly); ly += 20;
 
   let ws = "Wanted: "; for (let i = 0; i < wantedLevel; i++) ws += "★"; for (let i = wantedLevel; i < WANTED_THRESHOLDS.length - 1; i++) ws += "☆";
-  ctx.fillText(ws, W / 2, ly); ly += 22;
+  ctx.fillText(ws, W / 2, ly); ly += 20;
 
   // Stat build summary
   ctx.fillStyle = "#888"; ctx.font = Math.min(11, W * 0.02) + "px monospace";
   let statStr = "Build: ";
   for (let i = 0; i < 8; i++) { if (stats[i] > 0) statStr += STAT_NAMES[i] + ":" + stats[i] + " "; }
-  ctx.fillText(statStr || "Build: (no stats allocated)", W / 2, ly); ly += 18;
+  ctx.fillText(statStr || "Build: (no stats allocated)", W / 2, ly); ly += 16;
 
   if (totalUpgrades > 0) {
     ctx.fillStyle = "#888"; ctx.font = Math.min(12, W * 0.022) + "px monospace";
@@ -1893,10 +2222,11 @@ function drawGameOver() {
   const t2 = performance.now() / 1000;
   ctx.fillStyle = Math.sin(t2 * 3) > 0 ? "#ffcc00" : "#ff8800";
   ctx.font = "bold " + Math.min(22, W * 0.04) + "px monospace";
-  ctx.fillText("[ CLICK or TAP to RESTART ]", W / 2, H * 0.88);
+  ctx.fillText("[ CLICK or TAP to RESTART ]", W / 2, H * 0.92);
 }
 
 function startGame() {
+  initAudio();
   score = 0; waveTimer = 2; wantedLevel = 0; time = 0;
   enemies.length = 0; bullets.length = 0; enemyBullets.length = 0;
   homingMissiles.length = 0; particles.length = 0; floatingTexts.length = 0;
@@ -1909,17 +2239,98 @@ function startGame() {
   maxCombo = 0; maxStreak = 0;
   activePowerups = {};
   rigRecaptureTimer = RIG_RECAPTURE_INTERVAL;
+  paused = false;
+  timeSurvived = 0;
+  totalKills = { drone: 0, plane: 0, chopper: 0, boss: 0 };
+  totalDamageTaken = 0;
+  totalDamageDealt = 0;
+  screenFlash = { color: "", alpha: 0 };
+  vignetteIntensity = 0;
   resetPlayer(); resetUpgrades(); initRigs();
   gameState = "playing";
 }
 
 canvas.addEventListener("click", (e) => {
-  if (gameState === "title" || gameState === "gameover") startGame();
+  if (gameState === "title" || gameState === "gameover") { initAudio(); startGame(); }
   else if (gameState === "upgrade") handleUpgradeClick(e.clientX, e.clientY);
+  else if (gameState === "paused") handlePauseClick(e.clientX, e.clientY);
 });
 canvas.addEventListener("touchstart", (e) => {
-  if (gameState === "title" || gameState === "gameover") { startGame(); e.preventDefault(); }
+  if (gameState === "title" || gameState === "gameover") { initAudio(); startGame(); e.preventDefault(); }
+  else if (gameState === "paused") {
+    for (const t of e.changedTouches) handlePauseClick(t.clientX, t.clientY);
+    e.preventDefault();
+  }
 }, { passive: false, once: false });
+
+function handlePauseClick(mx, my) {
+  const btnW = 160, btnH = 40;
+  // Resume button
+  const resumeX = (W - btnW) / 2, resumeY = H * 0.45;
+  if (mx >= resumeX && mx <= resumeX + btnW && my >= resumeY && my <= resumeY + btnH) {
+    paused = false; gameState = "playing"; return;
+  }
+  // Sound toggle
+  const soundY = H * 0.55;
+  if (mx >= resumeX && mx <= resumeX + btnW && my >= soundY && my <= soundY + btnH) {
+    settings.soundOn = !settings.soundOn; saveSettings(); return;
+  }
+  // Shake toggle
+  const shakeY = H * 0.63;
+  if (mx >= resumeX && mx <= resumeX + btnW && my >= shakeY && my <= shakeY + btnH) {
+    settings.shakeOn = !settings.shakeOn; saveSettings(); return;
+  }
+  // Restart button
+  const restartY = H * 0.73;
+  if (mx >= resumeX && mx <= resumeX + btnW && my >= restartY && my <= restartY + btnH) {
+    startGame(); return;
+  }
+}
+
+function drawPauseScreen() {
+  ctx.fillStyle = "rgba(0,0,10,0.8)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ffcc00"; ctx.font = "bold " + Math.min(40, W * 0.07) + "px monospace";
+  ctx.fillText("PAUSED", W / 2, H * 0.25);
+
+  // Time + Score
+  const mins = Math.floor(timeSurvived / 60);
+  const secs = Math.floor(timeSurvived % 60);
+  ctx.fillStyle = "#aaa"; ctx.font = Math.min(14, W * 0.025) + "px monospace";
+  ctx.fillText("Score: " + score + " | Time: " + mins + ":" + (secs < 10 ? "0" : "") + secs + " | Level: " + playerLevel, W / 2, H * 0.33);
+
+  const btnW = 160, btnH = 40;
+  const btnX = (W - btnW) / 2;
+
+  // Resume button
+  drawPauseButton(btnX, H * 0.45, btnW, btnH, "▶ RESUME", "#44ff88");
+  // Sound toggle
+  drawPauseButton(btnX, H * 0.55, btnW, btnH, "🔊 SOUND: " + (settings.soundOn ? "ON" : "OFF"), settings.soundOn ? "#44ccff" : "#666");
+  // Shake toggle
+  drawPauseButton(btnX, H * 0.63, btnW, btnH, "📳 SHAKE: " + (settings.shakeOn ? "ON" : "OFF"), settings.shakeOn ? "#44ccff" : "#666");
+  // Restart
+  drawPauseButton(btnX, H * 0.73, btnW, btnH, "↻ RESTART", "#ff6644");
+
+  ctx.fillStyle = "#555"; ctx.font = Math.min(12, W * 0.022) + "px monospace";
+  ctx.fillText("Press P or ESC to resume", W / 2, H * 0.88);
+}
+
+function drawPauseButton(x, y, w, h, text, color) {
+  ctx.fillStyle = "rgba(20,20,40,0.8)";
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill(); }
+  else ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = color + "88"; ctx.lineWidth = 2;
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.stroke(); }
+  else ctx.strokeRect(x, y, w, h);
+  // Hover effect
+  if (mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h) {
+    ctx.fillStyle = color + "15";
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill(); }
+    else ctx.fillRect(x, y, w, h);
+  }
+  ctx.fillStyle = color; ctx.font = "bold " + Math.min(14, w * 0.08) + "px monospace";
+  ctx.textAlign = "center"; ctx.fillText(text, x + w / 2, y + h / 2 + 5);
+}
 
 let lastTime = performance.now();
 function gameLoop(now) {
@@ -1929,6 +2340,7 @@ function gameLoop(now) {
   else if (gameState === "title") drawTitle();
   else if (gameState === "gameover") { draw(); drawGameOver(); }
   else if (gameState === "upgrade") { draw(); drawUpgradeScreen(); }
+  else if (gameState === "paused") { draw(); drawPauseScreen(); }
   requestAnimationFrame(gameLoop);
 }
 requestAnimationFrame(gameLoop);
