@@ -168,6 +168,8 @@ function playSound(type, vol) {
   } catch(e) {}
 }
 
+let lastCritSoundTime = 0;
+
 /* ===== SCREEN EFFECTS ===== */
 let screenFlash = { color: "", alpha: 0 };
 function addScreenFlash(color, alpha) { screenFlash.color = color; screenFlash.alpha = alpha; }
@@ -254,16 +256,22 @@ function handleTouch(e) {
   if (gameState === "paused") { return; }
   if (gameState !== "playing") return;
 
-  // Check mobile buttons first
+  // Check mobile buttons first (constants shared with drawTouchControls)
+  const MOBILE_BTN_SIZE = 36;
+  const MOBILE_BTN_Y = H - MOBILE_BTN_SIZE - 50;
+  const DASH_BTN_X = 20;
+  const AF_BTN_X = 70;
+  const PAUSE_BTN_X = W - 50;
+  const PAUSE_BTN_Y = 10;
+  const PAUSE_BTN_SIZE = 30;
+
   for (const t of e.changedTouches) {
     // Pause button (top-right)
-    if (t.clientX > W - 50 && t.clientY < 40 && e.type === "touchstart") {
+    if (t.clientX > PAUSE_BTN_X && t.clientY < PAUSE_BTN_Y + PAUSE_BTN_SIZE && e.type === "touchstart") {
       togglePause(); return;
     }
     // Dash button
-    const btnSize = 36;
-    const btnY = H - btnSize - 50;
-    if (t.clientX < 20 + btnSize && t.clientY > btnY && t.clientY < btnY + btnSize && e.type === "touchstart") {
+    if (t.clientX >= DASH_BTN_X && t.clientX <= DASH_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE && e.type === "touchstart") {
       if (player.dashCooldown <= 0 && touchMove.active) {
         const dashA = Math.atan2(touchMove.y, touchMove.x);
         player.dashing = DASH_DURATION;
@@ -275,7 +283,7 @@ function handleTouch(e) {
       return;
     }
     // Auto-fire toggle
-    if (t.clientX > 52 && t.clientX < 52 + btnSize + 36 && t.clientY > btnY && t.clientY < btnY + btnSize && e.type === "touchstart") {
+    if (t.clientX >= AF_BTN_X && t.clientX <= AF_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE && e.type === "touchstart") {
       settings.autoFire = !settings.autoFire;
       saveSettings();
       return;
@@ -591,10 +599,8 @@ let totalDamageTaken = 0;
 let totalDamageDealt = 0;
 
 function togglePause() {
-  if (gameState === "playing") { paused = !paused; }
+  if (gameState === "playing") { paused = true; gameState = "paused"; }
   else if (gameState === "paused") { paused = false; gameState = "playing"; }
-  if (paused && gameState === "playing") gameState = "paused";
-  else if (!paused && gameState === "paused") gameState = "playing";
 }
 
 /* ===== COMPUTED STATS (from diep.io points) ===== */
@@ -899,7 +905,7 @@ function update(dt) {
   player.dashCooldown -= dt;
   if (player.dashing > 0) {
     player.dashing -= dt;
-    const dashSpd = DASH_SPEED * (player.dashing / DASH_DURATION);
+    const dashSpd = DASH_SPEED;
     player.vx = Math.cos(player.dashAngle) * dashSpd;
     player.vy = Math.sin(player.dashAngle) * dashSpd;
     player.invincible = Math.max(player.invincible, 0.05);
@@ -1181,7 +1187,7 @@ function update(dt) {
     for (let j = enemies.length - 1; j >= 0; j--) {
       if (dist(b, enemies[j]) < enemies[j].radius + 6) {
         enemies[j].hp -= b.damage;
-        if (b.crit) { spawnExplosion(b.x, b.y, "#ff0000", 6); spawnFloatingText(b.x, b.y - 10, "CRIT!", "#ff4444"); playSound("explosion", 0.15); }
+        if (b.crit) { spawnExplosion(b.x, b.y, "#ff0000", 6); spawnFloatingText(b.x, b.y - 10, "CRIT!", "#ff4444"); if (time - lastCritSoundTime > 0.15) { playSound("explosion", 0.15); lastCritSoundTime = time; } }
         else spawnExplosion(b.x, b.y, "#ffcc00", 4);
         if (b.pierce > 0) { b.pierce--; b.damage *= 0.7; }
         else { bullets.splice(i, 1); break; }
@@ -1393,13 +1399,19 @@ function drawWater() {
 
   const sx = Math.floor(camera.x / TILE), sy = Math.floor(camera.y / TILE);
   const ex = Math.ceil((camera.x + W) / TILE), ey = Math.ceil((camera.y + H) / TILE);
+  // Pre-calculate day/night multipliers
+  const rMult = dayBrightness;
+  const rOffset = nightTint * 0.1 * 255;
+  const gMult = dayBrightness;
+  const bMult = dayBrightness;
+  const bOffset = nightTint * 0.15 * 255;
   for (let y = sy; y <= ey; y++) {
     for (let x = sx; x <= ex; x++) {
       const w = Math.sin(time * 1.5 + x * 0.5 + y * 0.3) * 0.02;
       const base = (x + y) % 2 === 0 ? 0.15 : 0.18;
-      const r = clamp(Math.floor(((0.04 + w) * dayBrightness + nightTint * 0.1) * 255), 0, 255);
-      const g = clamp(Math.floor(((base + w) * dayBrightness) * 255), 0, 255);
-      const b = clamp(Math.floor(((0.35 + base + w) * dayBrightness + nightTint * 0.15) * 255), 0, 255);
+      const r = clamp(Math.floor((0.04 + w) * rMult * 255 + rOffset), 0, 255);
+      const g = clamp(Math.floor((base + w) * gMult * 255), 0, 255);
+      const b = clamp(Math.floor((0.35 + base + w) * bMult * 255 + bOffset), 0, 255);
       ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
       ctx.fillRect(x * TILE, y * TILE, TILE + 1, TILE + 1);
     }
