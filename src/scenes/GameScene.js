@@ -41,10 +41,8 @@ export default class GameScene extends Phaser.Scene {
       s.W = gameSize.width;
       s.H = gameSize.height;
     });
-    this.game.events.on('postrender', () => {
-      if (!this.ctx) this.ctx = this.game.canvas.getContext('2d');
-      this.render(getSettings());
-    });
+    this._postRenderHandler = () => this.render(getSettings());
+    this.game.events.on('postrender', this._postRenderHandler);
 
     // Keyboard input via Phaser
     this.input.keyboard.on('keydown', (e) => {
@@ -94,6 +92,12 @@ export default class GameScene extends Phaser.Scene {
 
   soundFn(type, vol) {
     playSound(type, vol, getSettings().soundOn);
+  }
+
+  shutdown() {
+    if (this._postRenderHandler) {
+      this.game.events.off('postrender', this._postRenderHandler);
+    }
   }
 
   startGame() {
