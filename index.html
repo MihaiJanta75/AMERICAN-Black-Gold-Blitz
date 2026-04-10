@@ -53,6 +53,8 @@ const CHOPPER_DAMAGE = 20;
 const BULLET_SPEED = 9;
 const HOMING_SPEED = 5;
 const HOMING_TURN = 0.06;
+const MAX_DELTA_TIME = 0.05;
+const ENEMY_SPAWN_DISTANCE = 400;
 
 /* ===== CANVAS SETUP ===== */
 const canvas = document.getElementById("game");
@@ -91,6 +93,7 @@ canvas.addEventListener("touchcancel", handleTouchEnd, { passive: false });
 
 function handleTouch(e) {
   e.preventDefault();
+  if (gameState !== "playing") return;
   for (const t of e.touches) {
     if (t.clientX < W * 0.5) {
       if (!joystickCenter) joystickCenter = { x: t.clientX, y: t.clientY };
@@ -155,8 +158,8 @@ canvas.addEventListener("contextmenu", e => e.preventDefault());
 /* ===== CAMERA ===== */
 const camera = { x: 0, y: 0 };
 function updateCamera(target) {
-  camera.x = clamp(target.x - W / 2, 0, WORLD_W - W);
-  camera.y = clamp(target.y - H / 2, 0, WORLD_H - H);
+  camera.x = clamp(target.x - W / 2, 0, Math.max(0, WORLD_W - W));
+  camera.y = clamp(target.y - H / 2, 0, Math.max(0, WORLD_H - H));
 }
 
 /* ===== PARTICLE SYSTEM ===== */
@@ -326,10 +329,9 @@ function spawnWave(dt) {
   waveTimer = baseInterval;
 
   // Pick spawn position near screen edge but within world
-  const edgeDist = 400;
   const spawnAngle = Math.random() * Math.PI * 2;
-  const sx = clamp(player.x + Math.cos(spawnAngle) * edgeDist, 50, WORLD_W - 50);
-  const sy = clamp(player.y + Math.sin(spawnAngle) * edgeDist, 50, WORLD_H - 50);
+  const sx = clamp(player.x + Math.cos(spawnAngle) * ENEMY_SPAWN_DISTANCE, 50, WORLD_W - 50);
+  const sy = clamp(player.y + Math.sin(spawnAngle) * ENEMY_SPAWN_DISTANCE, 50, WORLD_H - 50);
 
   const roll = Math.random();
   if (roll < 0.45) {
@@ -374,7 +376,7 @@ function update(dt) {
 
   // Agility penalty based on oil
   const oilRatio = player.oil / OIL_MAX;
-  const speed = PLAYER_BASE_SPEED - oilRatio * PLAYER_MAX_SPEED_PENALTY;
+  const speed = Math.max(1, PLAYER_BASE_SPEED - oilRatio * PLAYER_MAX_SPEED_PENALTY);
 
   player.vx = lerp(player.vx, ix * speed, 0.15);
   player.vy = lerp(player.vy, iy * speed, 0.15);
@@ -576,6 +578,9 @@ function update(dt) {
     }
     m.x += Math.cos(m.angle) * m.speed;
     m.y += Math.sin(m.angle) * m.speed;
+
+    // Missile trail particle
+    spawnExplosion(m.x - Math.cos(m.angle) * 6, m.y - Math.sin(m.angle) * 6, "#ff6600", 1);
 
     // Hit
     for (let j = enemies.length - 1; j >= 0; j--) {
@@ -901,8 +906,6 @@ function drawBullets() {
     ctx.fillStyle = "#ffcc00";
     ctx.fillRect(-8, -1, 4, 2);
     ctx.restore();
-    // Trail
-    spawnExplosion(m.x - Math.cos(m.angle) * 6, m.y - Math.sin(m.angle) * 6, "#ff6600", 1);
   }
 }
 
@@ -1152,7 +1155,7 @@ canvas.addEventListener("touchstart", (e) => {
 /* ===== MAIN LOOP ===== */
 let lastTime = performance.now();
 function gameLoop(now) {
-  const dt = Math.min((now - lastTime) / 1000, 0.05); // Cap dt
+  const dt = Math.min((now - lastTime) / 1000, MAX_DELTA_TIME);
   lastTime = now;
 
   if (gameState === "playing") {
