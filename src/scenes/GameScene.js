@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { removeLoadingScreen } from '../main.js';
+import { removeLoadingScreen } from '../loadingScreen.js';
 import { WORLD_W, WORLD_H, JOYSTICK_RADIUS, DASH_DURATION, DASH_COOLDOWN, HOMING_THRESHOLD, UPGRADE_INTERVAL } from '../constants.js';
 import { rand, lerp, clamp } from '../utils.js';
 import { UPGRADES } from '../config.js';
