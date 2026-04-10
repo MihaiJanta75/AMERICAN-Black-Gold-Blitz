@@ -1,11 +1,7 @@
 import Phaser from 'phaser';
 import BootScene from './scenes/BootScene.js';
 import GameScene from './scenes/GameScene.js';
-
-export function removeLoadingScreen() {
-  const el = document.getElementById('loading-screen');
-  if (el) el.remove();
-}
+import { removeLoadingScreen } from './loadingScreen.js';
 
 const config = {
   type: Phaser.CANVAS,
@@ -26,4 +22,12 @@ const config = {
   banner: false,
 };
 
-const game = new Phaser.Game(config);
+try {
+  const game = new Phaser.Game(config);
+} catch (err) {
+  console.error('Failed to initialize Phaser:', err);
+  removeLoadingScreen();
+}
+
+// Fallback: remove loading screen after 6s regardless, in case Phaser fails silently
+setTimeout(() => removeLoadingScreen(), 6000);
