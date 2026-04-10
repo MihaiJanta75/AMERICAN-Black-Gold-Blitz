@@ -131,7 +131,10 @@ export default class GameScene extends Phaser.Scene {
 
     // Start game on title/gameover tap
     if (s.gameState === 'title' || s.gameState === 'gameover') {
-      if (e.type === 'touchstart') { initAudio(); this.startGame(); }
+      if (e.type === 'touchstart') {
+        initAudio();
+        this.startGame();
+      }
       return;
     }
 
