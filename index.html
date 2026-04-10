@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Black Gold Blitz</title>
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAxMDAgMTAwJz48dGV4dCB5PScuOWVtJyBmb250LXNpemU9JzkwJz7wn5uiPC90ZXh0Pjwvc3ZnPg==">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body {
@@ -58,6 +59,14 @@ canvas {
   <div id="loading-spinner"></div>
   <p>LOADING...</p>
 </div>
+<script>
+  // Fallback: remove loading screen if the game module fails to load or initialize
+  // This runs even if the module script below 404s or throws an error
+  setTimeout(function() {
+    var el = document.getElementById('loading-screen');
+    if (el) el.remove();
+  }, 8000);
+</script>
 <script type="module" src="/src/main.js"></script>
 </body>
 </html>
