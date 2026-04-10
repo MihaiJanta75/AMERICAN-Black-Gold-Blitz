@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { removeLoadingScreen } from '../main.js';
 import { WORLD_W, WORLD_H, JOYSTICK_RADIUS, DASH_DURATION, DASH_COOLDOWN, HOMING_THRESHOLD, UPGRADE_INTERVAL } from '../constants.js';
 import { rand, lerp, clamp, dist } from '../utils.js';
 import { UPGRADES } from '../config.js';
@@ -67,6 +68,8 @@ export default class GameScene extends Phaser.Scene {
       if (pointer.rightButtonReleased) s.input.rightMouseDown = false;
       else s.input.mouseDown = false;
     });
+
+    this._loadingRemoved = false;
 
     // Disable context menu
     this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -390,5 +393,10 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.canvasTexture.refresh();
+
+    if (!this._loadingRemoved) {
+      this._loadingRemoved = true;
+      removeLoadingScreen();
+    }
   }
 }
