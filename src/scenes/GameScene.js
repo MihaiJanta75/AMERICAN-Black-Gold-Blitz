@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { removeLoadingScreen } from '../main.js';
 import { WORLD_W, WORLD_H, JOYSTICK_RADIUS, DASH_DURATION, DASH_COOLDOWN, HOMING_THRESHOLD, UPGRADE_INTERVAL } from '../constants.js';
-import { rand, lerp, clamp, dist } from '../utils.js';
+import { rand, lerp, clamp } from '../utils.js';
 import { UPGRADES } from '../config.js';
 import {
   state, resetGameState, getMaxOil, getUpgradeChoices, applyUpgrade,
@@ -31,11 +31,11 @@ export default class GameScene extends Phaser.Scene {
   create() {
     const s = state;
     this.s = s;
-    this.isTouchDevice = 'ontouchstart' in window;
+    this.isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
     // Set up dimensions and draw directly to Phaser's canvas via postrender
-    s.W = this.scale.width;
-    s.H = this.scale.height;
+    s.W = this.scale.width || window.innerWidth;
+    s.H = this.scale.height || window.innerHeight;
     this.ctx = this.game.canvas.getContext('2d');
     this.scale.on('resize', (gameSize) => {
       s.W = gameSize.width;
@@ -44,14 +44,16 @@ export default class GameScene extends Phaser.Scene {
     this._postRenderHandler = () => this.render(getSettings());
     this.game.events.on('postrender', this._postRenderHandler);
 
-    // Keyboard input via Phaser
-    this.input.keyboard.on('keydown', (e) => {
-      s.input.keys[e.code] = true;
-      if (s.gameState === 'playing' && e.key >= '1' && e.key <= '8') allocateStat(s, parseInt(e.key) - 1);
-      if (e.code === 'KeyP' || e.code === 'Escape') this.togglePause();
-      if (e.code === 'KeyF') { toggleSetting('autoFire'); }
-    });
-    this.input.keyboard.on('keyup', (e) => { s.input.keys[e.code] = false; });
+    // Keyboard input via Phaser (null-check for mobile environments)
+    if (this.input.keyboard) {
+      this.input.keyboard.on('keydown', (e) => {
+        s.input.keys[e.code] = true;
+        if (s.gameState === 'playing' && e.key >= '1' && e.key <= '8') allocateStat(s, parseInt(e.key) - 1);
+        if (e.code === 'KeyP' || e.code === 'Escape') this.togglePause();
+        if (e.code === 'KeyF') { toggleSetting('autoFire'); }
+      });
+      this.input.keyboard.on('keyup', (e) => { s.input.keys[e.code] = false; });
+    }
 
     // Mouse input via Phaser
     this.input.on('pointermove', (pointer) => {
@@ -78,15 +80,21 @@ export default class GameScene extends Phaser.Scene {
 
     this._loadingRemoved = false;
 
+    // Fallback: remove loading screen after 3s in case postrender never fires
+    setTimeout(() => removeLoadingScreen(), 3000);
+
     // Disable context menu
     this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // Touch controls
+    // Touch controls — attach to document so gestures starting outside canvas still register
     if (this.isTouchDevice) {
-      this.game.canvas.addEventListener('touchstart', (e) => this.handleTouch(e), { passive: false });
-      this.game.canvas.addEventListener('touchmove', (e) => this.handleTouch(e), { passive: false });
-      this.game.canvas.addEventListener('touchend', (e) => this.handleTouchEnd(e), { passive: false });
-      this.game.canvas.addEventListener('touchcancel', (e) => this.handleTouchEnd(e), { passive: false });
+      this._touchStartHandler = (e) => this.handleTouch(e);
+      this._touchMoveHandler = (e) => this.handleTouch(e);
+      this._touchEndHandler = (e) => this.handleTouchEnd(e);
+      document.addEventListener('touchstart', this._touchStartHandler, { passive: false });
+      document.addEventListener('touchmove', this._touchMoveHandler, { passive: false });
+      document.addEventListener('touchend', this._touchEndHandler, { passive: false });
+      document.addEventListener('touchcancel', this._touchEndHandler, { passive: false });
     }
   }
 
@@ -97,6 +105,12 @@ export default class GameScene extends Phaser.Scene {
   shutdown() {
     if (this._postRenderHandler) {
       this.game.events.off('postrender', this._postRenderHandler);
+    }
+    if (this.isTouchDevice) {
+      document.removeEventListener('touchstart', this._touchStartHandler);
+      document.removeEventListener('touchmove', this._touchMoveHandler);
+      document.removeEventListener('touchend', this._touchEndHandler);
+      document.removeEventListener('touchcancel', this._touchEndHandler);
     }
   }
 
@@ -114,6 +128,16 @@ export default class GameScene extends Phaser.Scene {
   handleTouch(e) {
     e.preventDefault();
     const s = this.s;
+
+    // Start game on title/gameover tap
+    if (s.gameState === 'title' || s.gameState === 'gameover') {
+      if (e.type === 'touchstart') {
+        initAudio();
+        this.startGame();
+      }
+      return;
+    }
+
     if (s.gameState === 'upgrade') { this.handleUpgradeTouchEvent(e); return; }
     if (s.gameState === 'playing' && s.showStatPanel) { this.handleStatTouch(e); }
     if (s.gameState === 'paused') return;
@@ -352,46 +376,52 @@ export default class GameScene extends Phaser.Scene {
 
   /* ===== RENDER ===== */
   render(settings) {
+    // Remove loading screen on first render regardless of drawing outcome
+    if (!this._loadingRemoved) {
+      this._loadingRemoved = true;
+      removeLoadingScreen();
+    }
+
     const s = this.s;
     const ctx = this.ctx;
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, s.W, s.H);
+    try {
+      ctx.clearRect(0, 0, s.W, s.H);
 
-    if (s.gameState === 'title') {
-      drawTitle(ctx, s);
-    } else if (s.gameState === 'playing' || s.gameState === 'upgrade' || s.gameState === 'paused' || s.gameState === 'gameover') {
-      // Draw world
-      ctx.save();
-      if (s.shakeAmount > 0) ctx.translate(rand(-s.shakeAmount, s.shakeAmount), rand(-s.shakeAmount, s.shakeAmount));
-      ctx.translate(-s.camera.x, -s.camera.y);
-      drawWater(ctx, s);
-      drawRigs(ctx, s);
-      drawLoot(ctx, s);
-      drawShadows(ctx, s);
-      drawEnemies(ctx, s);
-      drawBullets(ctx, s);
-      drawOrbitals(ctx, s);
-      drawPlayer(ctx, s);
-      drawParticles(ctx, s);
-      drawFloatingTexts(ctx, s);
-      ctx.restore();
+      if (s.gameState === 'title') {
+        drawTitle(ctx, s);
+      } else if (s.gameState === 'playing' || s.gameState === 'upgrade' || s.gameState === 'paused' || s.gameState === 'gameover') {
+        // Draw world
+        ctx.save();
+        if (s.shakeAmount > 0) ctx.translate(rand(-s.shakeAmount, s.shakeAmount), rand(-s.shakeAmount, s.shakeAmount));
+        ctx.translate(-s.camera.x, -s.camera.y);
+        drawWater(ctx, s);
+        drawRigs(ctx, s);
+        drawLoot(ctx, s);
+        drawShadows(ctx, s);
+        drawEnemies(ctx, s);
+        drawBullets(ctx, s);
+        drawOrbitals(ctx, s);
+        drawPlayer(ctx, s);
+        drawParticles(ctx, s);
+        drawFloatingTexts(ctx, s);
+        ctx.restore();
 
-      // HUD
-      drawHUD(ctx, s, settings);
-      drawStatPanel(ctx, s);
-      drawTouchControls(ctx, s, settings, this.isTouchDevice);
-      drawScreenEffects(ctx, s);
+        // HUD
+        drawHUD(ctx, s, settings);
+        drawStatPanel(ctx, s);
+        drawTouchControls(ctx, s, settings, this.isTouchDevice);
+        drawScreenEffects(ctx, s);
 
-      // Overlay screens
-      if (s.gameState === 'gameover') drawGameOver(ctx, s);
-      else if (s.gameState === 'upgrade') drawUpgradeScreen(ctx, s);
-      else if (s.gameState === 'paused') drawPauseScreen(ctx, s, settings);
-    }
-
-    if (!this._loadingRemoved) {
-      this._loadingRemoved = true;
-      removeLoadingScreen();
+        // Overlay screens
+        if (s.gameState === 'gameover') drawGameOver(ctx, s);
+        else if (s.gameState === 'upgrade') drawUpgradeScreen(ctx, s);
+        else if (s.gameState === 'paused') drawPauseScreen(ctx, s, settings);
+      }
+    } catch (err) {
+      // Rendering errors should not crash the game loop
+      console.error('Render error:', err);
     }
   }
 }
