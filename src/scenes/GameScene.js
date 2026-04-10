@@ -33,9 +33,16 @@ export default class GameScene extends Phaser.Scene {
     this.s = s;
     this.isTouchDevice = 'ontouchstart' in window;
 
-    // Create the CanvasTexture for rendering
-    this.resizeCanvas();
-    this.scale.on('resize', () => this.resizeCanvas());
+    // Set up dimensions and draw directly to Phaser's canvas via postrender
+    s.W = this.scale.width;
+    s.H = this.scale.height;
+    this.ctx = this.game.canvas.getContext('2d');
+    this.scale.on('resize', (gameSize) => {
+      s.W = gameSize.width;
+      s.H = gameSize.height;
+    });
+    this._postRenderHandler = () => this.render(getSettings());
+    this.game.events.on('postrender', this._postRenderHandler);
 
     // Keyboard input via Phaser
     this.input.keyboard.on('keydown', (e) => {
@@ -83,22 +90,14 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  resizeCanvas() {
-    const s = this.s;
-    s.W = this.scale.width;
-    s.H = this.scale.height;
-
-    // Recreate the CanvasTexture at new size
-    if (this.canvasTexture) this.canvasTexture.destroy();
-    if (this.canvasImage) this.canvasImage.destroy();
-
-    this.canvasTexture = this.textures.createCanvas('game-canvas-' + Date.now(), s.W, s.H);
-    this.canvasImage = this.add.image(s.W / 2, s.H / 2, this.canvasTexture.key);
-    this.ctx = this.canvasTexture.context;
-  }
-
   soundFn(type, vol) {
     playSound(type, vol, getSettings().soundOn);
+  }
+
+  shutdown() {
+    if (this._postRenderHandler) {
+      this.game.events.off('postrender', this._postRenderHandler);
+    }
   }
 
   startGame() {
@@ -269,8 +268,6 @@ export default class GameScene extends Phaser.Scene {
     if (s.gameState === 'playing') {
       this.updateGame(dt, sfn);
     }
-
-    this.render(settings);
   }
 
   updateGame(dt, soundFn) {
@@ -391,8 +388,6 @@ export default class GameScene extends Phaser.Scene {
       else if (s.gameState === 'upgrade') drawUpgradeScreen(ctx, s);
       else if (s.gameState === 'paused') drawPauseScreen(ctx, s, settings);
     }
-
-    this.canvasTexture.refresh();
 
     if (!this._loadingRemoved) {
       this._loadingRemoved = true;
