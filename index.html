@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Black Gold Blitz</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+canvas {
+  display: block;
+  width: 100%; height: 100%;
+  image-rendering: pixelated;
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+"use strict";
+
+/* ===== CONSTANTS ===== */
+const WORLD_W = 4000;
+const WORLD_H = 4000;
+const TILE = 64;
+const WATER_COLOR_A = "#0a3d5c";
+const WATER_COLOR_B = "#0b4a6f";
+const OIL_START = 300;
+const OIL_MAX = 2000;
+const DUAL_CANNON_THRESHOLD = 500;
+const HOMING_THRESHOLD = 1000;
+const WANTED_THRESHOLDS = [0, 300, 600, 1000, 1500];
+const PLAYER_BASE_SPEED = 4.5;
+const PLAYER_MAX_SPEED_PENALTY = 1.5;
+const FIRE_COOLDOWN_MS = 180;
+const HOMING_COOLDOWN_MS = 600;
+const RIG_COUNT = 8;
+const CAPTURE_RADIUS = 70;
+const CAPTURE_TIME = 2.0;
+const OIL_PER_SECOND = 8;
+const DAMAGE_OIL_LOSS = 40;
+const DRONE_DAMAGE = 15;
+const PLANE_DAMAGE = 25;
+const CHOPPER_DAMAGE = 20;
+const BULLET_SPEED = 9;
+const HOMING_SPEED = 5;
+const HOMING_TURN = 0.06;
+
+/* ===== CANVAS SETUP ===== */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* ===== UTILS ===== */
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function angle(a, b) { return Math.atan2(b.y - a.y, b.x - a.x); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
+function randInt(lo, hi) { return Math.floor(rand(lo, hi + 1)); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+/* ===== INPUT ===== */
+const keys = {};
+window.addEventListener("keydown", e => { keys[e.code] = true; });
+window.addEventListener("keyup", e => { keys[e.code] = false; });
+
+let touchMove = { x: 0, y: 0, active: false };
+let touchFire = false;
+let touchMissile = false;
+let joystickCenter = null;
+const JOYSTICK_RADIUS = 60;
+
+canvas.addEventListener("touchstart", handleTouch, { passive: false });
+canvas.addEventListener("touchmove", handleTouch, { passive: false });
+canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
+canvas.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+
+function handleTouch(e) {
+  e.preventDefault();
+  for (const t of e.touches) {
+    if (t.clientX < W * 0.5) {
+      if (!joystickCenter) joystickCenter = { x: t.clientX, y: t.clientY };
+      const dx = t.clientX - joystickCenter.x;
+      const dy = t.clientY - joystickCenter.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 5) {
+        touchMove.x = dx / Math.max(d, JOYSTICK_RADIUS);
+        touchMove.y = dy / Math.max(d, JOYSTICK_RADIUS);
+        touchMove.active = true;
+      }
+    } else {
+      if (t.clientY < H * 0.5) {
+        touchMissile = true;
+      } else {
+        touchFire = true;
+      }
+    }
+  }
+}
+
+function handleTouchEnd(e) {
+  e.preventDefault();
+  if (e.touches.length === 0) {
+    touchMove = { x: 0, y: 0, active: false };
+    joystickCenter = null;
+    touchFire = false;
+    touchMissile = false;
+  } else {
+    let hasLeft = false;
+    let hasRightLow = false;
+    let hasRightHigh = false;
+    for (const t of e.touches) {
+      if (t.clientX < W * 0.5) hasLeft = true;
+      else if (t.clientY >= H * 0.5) hasRightLow = true;
+      else hasRightHigh = true;
+    }
+    if (!hasLeft) {
+      touchMove = { x: 0, y: 0, active: false };
+      joystickCenter = null;
+    }
+    touchFire = hasRightLow;
+    touchMissile = hasRightHigh;
+  }
+}
+
+/* Mouse aim + fire */
+let mouseX = W / 2, mouseY = H / 2;
+let mouseDown = false;
+let rightMouseDown = false;
+canvas.addEventListener("mousemove", e => { mouseX = e.clientX; mouseY = e.clientY; });
+canvas.addEventListener("mousedown", e => {
+  if (e.button === 0) mouseDown = true;
+  if (e.button === 2) rightMouseDown = true;
+});
+canvas.addEventListener("mouseup", e => {
+  if (e.button === 0) mouseDown = false;
+  if (e.button === 2) rightMouseDown = false;
+});
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+/* ===== CAMERA ===== */
+const camera = { x: 0, y: 0 };
+function updateCamera(target) {
+  camera.x = clamp(target.x - W / 2, 0, WORLD_W - W);
+  camera.y = clamp(target.y - H / 2, 0, WORLD_H - H);
+}
+
+/* ===== PARTICLE SYSTEM ===== */
+const particles = [];
+function spawnExplosion(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = rand(1, 4);
+    particles.push({
+      x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: rand(0.3, 0.8), maxLife: 0.8, r: rand(2, 5), color
+    });
+  }
+}
+function spawnOilSpill(x, y) {
+  for (let i = 0; i < 8; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = rand(0.5, 2);
+    particles.push({
+      x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: rand(0.5, 1.2), maxLife: 1.2, r: rand(3, 6), color: "#111"
+    });
+  }
+}
+
+/* ===== GAME STATE ===== */
+let gameState = "title"; // title, playing, gameover
+let score = 0;
+let waveTimer = 0;
+let wantedLevel = 0;
+let time = 0;
+
+/* ===== PLAYER ===== */
+const player = {
+  x: WORLD_W / 2, y: WORLD_H / 2,
+  vx: 0, vy: 0,
+  angle: -Math.PI / 2,
+  oil: OIL_START,
+  fireCooldown: 0,
+  homingCooldown: 0,
+  invincible: 0,
+  rotorAngle: 0,
+  alive: true,
+};
+
+function resetPlayer() {
+  player.x = WORLD_W / 2;
+  player.y = WORLD_H / 2;
+  player.vx = 0;
+  player.vy = 0;
+  player.angle = -Math.PI / 2;
+  player.oil = OIL_START;
+  player.fireCooldown = 0;
+  player.homingCooldown = 0;
+  player.invincible = 0;
+  player.alive = true;
+}
+
+/* ===== PROJECTILES ===== */
+const bullets = [];        // player bullets
+const enemyBullets = [];   // enemy projectiles
+const homingMissiles = []; // homing
+
+function fireBullet() {
+  const hasDual = player.oil >= DUAL_CANNON_THRESHOLD;
+  const offsets = hasDual ? [-8, 8] : [0];
+  for (const off of offsets) {
+    const perpAngle = player.angle + Math.PI / 2;
+    bullets.push({
+      x: player.x + Math.cos(perpAngle) * off,
+      y: player.y + Math.sin(perpAngle) * off,
+      vx: Math.cos(player.angle) * BULLET_SPEED,
+      vy: Math.sin(player.angle) * BULLET_SPEED,
+      life: 1.5,
+      damage: 20,
+    });
+  }
+}
+
+function fireHoming() {
+  if (player.oil < HOMING_THRESHOLD) return false;
+  const target = findNearestEnemy(player);
+  if (!target) return false;
+  homingMissiles.push({
+    x: player.x, y: player.y,
+    angle: player.angle,
+    speed: HOMING_SPEED,
+    target,
+    life: 4,
+    damage: 80,
+  });
+  return true;
+}
+
+function findNearestEnemy(from) {
+  let best = null, bestD = Infinity;
+  for (const e of enemies) {
+    const d = dist(from, e);
+    if (d < bestD) { bestD = d; best = e; }
+  }
+  return best;
+}
+
+/* ===== OIL RIGS ===== */
+const rigs = [];
+function initRigs() {
+  rigs.length = 0;
+  for (let i = 0; i < RIG_COUNT; i++) {
+    rigs.push({
+      x: rand(200, WORLD_W - 200),
+      y: rand(200, WORLD_H - 200),
+      owner: "neutral", // neutral, player, enemy
+      captureProgress: 0,
+      hp: 100,
+      maxHp: 100,
+    });
+  }
+}
+
+/* ===== ENEMIES ===== */
+const enemies = [];
+
+function spawnDrone(x, y) {
+  enemies.push({
+    type: "drone", x, y, vx: 0, vy: 0,
+    hp: 30, maxHp: 30, angle: 0, speed: 2.5 + wantedLevel * 0.3,
+    damage: DRONE_DAMAGE, radius: 14, scoreValue: 50,
+  });
+}
+
+function spawnPlane(edge) {
+  let x, y, ang;
+  switch (edge) {
+    case 0: x = rand(0, WORLD_W); y = -40; ang = Math.PI / 2 + rand(-0.3, 0.3); break;
+    case 1: x = WORLD_W + 40; y = rand(0, WORLD_H); ang = Math.PI + rand(-0.3, 0.3); break;
+    case 2: x = rand(0, WORLD_W); y = WORLD_H + 40; ang = -Math.PI / 2 + rand(-0.3, 0.3); break;
+    default: x = -40; y = rand(0, WORLD_H); ang = rand(-0.3, 0.3); break;
+  }
+  enemies.push({
+    type: "plane", x, y, vx: 0, vy: 0,
+    hp: 50, maxHp: 50, angle: ang, speed: 5 + wantedLevel * 0.4,
+    damage: PLANE_DAMAGE, radius: 18, scoreValue: 100,
+    fireCooldown: 0,
+  });
+}
+
+function spawnChopper(x, y) {
+  enemies.push({
+    type: "chopper", x, y, vx: 0, vy: 0,
+    hp: 80, maxHp: 80, angle: 0, speed: 2 + wantedLevel * 0.2,
+    damage: CHOPPER_DAMAGE, radius: 18, scoreValue: 150,
+    fireCooldown: 0, rotorAngle: 0,
+  });
+}
+
+/* ===== WAVE SPAWNER ===== */
+function spawnWave(dt) {
+  waveTimer -= dt;
+  if (waveTimer > 0) return;
+
+  wantedLevel = 0;
+  for (let i = WANTED_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (player.oil >= WANTED_THRESHOLDS[i]) { wantedLevel = i; break; }
+  }
+
+  const baseInterval = Math.max(1.0, 3.5 - wantedLevel * 0.5);
+  waveTimer = baseInterval;
+
+  // Pick spawn position near screen edge but within world
+  const edgeDist = 400;
+  const spawnAngle = Math.random() * Math.PI * 2;
+  const sx = clamp(player.x + Math.cos(spawnAngle) * edgeDist, 50, WORLD_W - 50);
+  const sy = clamp(player.y + Math.sin(spawnAngle) * edgeDist, 50, WORLD_H - 50);
+
+  const roll = Math.random();
+  if (roll < 0.45) {
+    const count = 2 + wantedLevel;
+    for (let i = 0; i < count; i++) {
+      spawnDrone(sx + rand(-40, 40), sy + rand(-40, 40));
+    }
+  } else if (roll < 0.75) {
+    spawnPlane(randInt(0, 3));
+  } else {
+    spawnChopper(sx, sy);
+  }
+
+  // Elite enemies at high wanted level
+  if (wantedLevel >= 3) spawnChopper(sx + 60, sy + 60);
+  if (wantedLevel >= 4) {
+    spawnPlane(randInt(0, 3));
+    spawnPlane(randInt(0, 3));
+  }
+}
+
+/* ===== UPDATE ===== */
+function update(dt) {
+  time += dt;
+
+  /* -- Player movement -- */
+  let ix = 0, iy = 0;
+  if (keys["KeyW"] || keys["ArrowUp"]) iy -= 1;
+  if (keys["KeyS"] || keys["ArrowDown"]) iy += 1;
+  if (keys["KeyA"] || keys["ArrowLeft"]) ix -= 1;
+  if (keys["KeyD"] || keys["ArrowRight"]) ix += 1;
+
+  if (touchMove.active) {
+    ix = touchMove.x;
+    iy = touchMove.y;
+  }
+
+  const inputLen = Math.hypot(ix, iy);
+  if (inputLen > 0.01) {
+    ix /= inputLen; iy /= inputLen;
+  }
+
+  // Agility penalty based on oil
+  const oilRatio = player.oil / OIL_MAX;
+  const speed = PLAYER_BASE_SPEED - oilRatio * PLAYER_MAX_SPEED_PENALTY;
+
+  player.vx = lerp(player.vx, ix * speed, 0.15);
+  player.vy = lerp(player.vy, iy * speed, 0.15);
+  player.x += player.vx;
+  player.y += player.vy;
+  player.x = clamp(player.x, 20, WORLD_W - 20);
+  player.y = clamp(player.y, 20, WORLD_H - 20);
+
+  // Aim towards mouse (desktop) or movement direction (mobile)
+  if (touchMove.active && inputLen > 0.01) {
+    player.angle = Math.atan2(iy, ix);
+  } else if (!touchMove.active) {
+    const worldMouseX = mouseX + camera.x;
+    const worldMouseY = mouseY + camera.y;
+    player.angle = Math.atan2(worldMouseY - player.y, worldMouseX - player.x);
+  }
+
+  player.rotorAngle += dt * 20;
+  if (player.invincible > 0) player.invincible -= dt;
+
+  /* -- Fire -- */
+  player.fireCooldown -= dt;
+  player.homingCooldown -= dt;
+  const wantFire = keys["Space"] || mouseDown || touchFire;
+  const wantMissile = keys["KeyE"] || rightMouseDown || touchMissile;
+
+  if (wantFire && player.fireCooldown <= 0) {
+    fireBullet();
+    player.fireCooldown = FIRE_COOLDOWN_MS / 1000;
+  }
+  if (wantMissile && player.homingCooldown <= 0 && player.oil >= HOMING_THRESHOLD) {
+    if (fireHoming()) {
+      player.homingCooldown = HOMING_COOLDOWN_MS / 1000;
+    }
+  }
+
+  /* -- Oil rigs -- */
+  for (const rig of rigs) {
+    if (rig.hp <= 0) continue;
+
+    // Player capture
+    if (dist(player, rig) < CAPTURE_RADIUS && rig.owner !== "player") {
+      rig.captureProgress += dt;
+      if (rig.captureProgress >= CAPTURE_TIME) {
+        rig.owner = "player";
+        rig.captureProgress = 0;
+        score += 200;
+      }
+    } else if (rig.owner !== "player") {
+      rig.captureProgress = Math.max(0, rig.captureProgress - dt * 0.5);
+    }
+
+    // Generate oil for player
+    if (rig.owner === "player" && player.oil < OIL_MAX) {
+      player.oil = Math.min(OIL_MAX, player.oil + OIL_PER_SECOND * dt);
+    }
+  }
+
+  /* -- Spawn enemies -- */
+  spawnWave(dt);
+
+  /* -- Update enemies -- */
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+
+    if (e.type === "drone") {
+      // Swarm towards player
+      const a = angle(e, player);
+      e.vx = lerp(e.vx, Math.cos(a) * e.speed, 0.08);
+      e.vy = lerp(e.vy, Math.sin(a) * e.speed, 0.08);
+      e.x += e.vx; e.y += e.vy;
+      e.angle = Math.atan2(e.vy, e.vx);
+
+      // Ram damage
+      if (dist(e, player) < 28 && player.invincible <= 0) {
+        damagePlayer(e.damage);
+        e.hp = 0;
+        spawnExplosion(e.x, e.y, "#ff5500", 10);
+      }
+    }
+
+    if (e.type === "plane") {
+      e.x += Math.cos(e.angle) * e.speed;
+      e.y += Math.sin(e.angle) * e.speed;
+
+      // Strafe fire
+      e.fireCooldown -= dt;
+      if (e.fireCooldown <= 0 && dist(e, player) < 500) {
+        const a = angle(e, player);
+        enemyBullets.push({
+          x: e.x, y: e.y,
+          vx: Math.cos(a) * 6,
+          vy: Math.sin(a) * 6,
+          life: 2, damage: e.damage,
+        });
+        e.fireCooldown = 0.8;
+      }
+
+      // Remove if out of world
+      if (e.x < -100 || e.x > WORLD_W + 100 || e.y < -100 || e.y > WORLD_H + 100) {
+        enemies.splice(i, 1);
+        continue;
+      }
+    }
+
+    if (e.type === "chopper") {
+      // Follow player at distance
+      const d = dist(e, player);
+      const a = angle(e, player);
+      e.rotorAngle = (e.rotorAngle || 0) + dt * 18;
+
+      if (d > 200) {
+        e.vx = lerp(e.vx, Math.cos(a) * e.speed, 0.05);
+        e.vy = lerp(e.vy, Math.sin(a) * e.speed, 0.05);
+      } else if (d < 120) {
+        e.vx = lerp(e.vx, -Math.cos(a) * e.speed, 0.05);
+        e.vy = lerp(e.vy, -Math.sin(a) * e.speed, 0.05);
+      } else {
+        // Strafe perpendicular
+        e.vx = lerp(e.vx, Math.cos(a + Math.PI / 2) * e.speed * 0.5, 0.05);
+        e.vy = lerp(e.vy, Math.sin(a + Math.PI / 2) * e.speed * 0.5, 0.05);
+      }
+      e.x += e.vx; e.y += e.vy;
+      e.x = clamp(e.x, 20, WORLD_W - 20);
+      e.y = clamp(e.y, 20, WORLD_H - 20);
+      e.angle = a;
+
+      // Fire projectile
+      e.fireCooldown -= dt;
+      if (e.fireCooldown <= 0 && d < 400) {
+        enemyBullets.push({
+          x: e.x, y: e.y,
+          vx: Math.cos(a) * 5,
+          vy: Math.sin(a) * 5,
+          life: 2.5, damage: e.damage,
+        });
+        e.fireCooldown = 1.2 - wantedLevel * 0.1;
+      }
+    }
+
+    // Enemy attacks rigs
+    for (const rig of rigs) {
+      if (rig.owner === "player" && rig.hp > 0 && dist(e, rig) < 60) {
+        rig.hp -= 10 * dt;
+        if (rig.hp <= 0) {
+          rig.owner = "neutral";
+          rig.hp = 0;
+          spawnExplosion(rig.x, rig.y, "#ff8800", 20);
+        }
+      }
+    }
+
+    // Check dead
+    if (e.hp <= 0) {
+      spawnExplosion(e.x, e.y, "#ff4400", 15);
+      score += e.scoreValue;
+      // Small oil drop
+      player.oil = Math.min(OIL_MAX, player.oil + 10);
+      enemies.splice(i, 1);
+    }
+  }
+
+  /* -- Update player bullets -- */
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.x += b.vx; b.y += b.vy;
+    b.life -= dt;
+    if (b.life <= 0 || b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H) {
+      bullets.splice(i, 1); continue;
+    }
+    // Hit enemies
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      if (dist(b, enemies[j]) < enemies[j].radius + 6) {
+        enemies[j].hp -= b.damage;
+        spawnExplosion(b.x, b.y, "#ffcc00", 4);
+        bullets.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  /* -- Update homing missiles -- */
+  for (let i = homingMissiles.length - 1; i >= 0; i--) {
+    const m = homingMissiles[i];
+    m.life -= dt;
+    if (m.life <= 0) {
+      spawnExplosion(m.x, m.y, "#ff6600", 6);
+      homingMissiles.splice(i, 1); continue;
+    }
+    // Track target
+    if (m.target && m.target.hp > 0) {
+      const desired = Math.atan2(m.target.y - m.y, m.target.x - m.x);
+      let diff = desired - m.angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      m.angle += clamp(diff, -HOMING_TURN, HOMING_TURN);
+    } else {
+      m.target = findNearestEnemy(m);
+    }
+    m.x += Math.cos(m.angle) * m.speed;
+    m.y += Math.sin(m.angle) * m.speed;
+
+    // Hit
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      if (dist(m, enemies[j]) < enemies[j].radius + 10) {
+        enemies[j].hp -= m.damage;
+        spawnExplosion(m.x, m.y, "#ff8800", 12);
+        homingMissiles.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  /* -- Update enemy bullets -- */
+  for (let i = enemyBullets.length - 1; i >= 0; i--) {
+    const b = enemyBullets[i];
+    b.x += b.vx; b.y += b.vy;
+    b.life -= dt;
+    if (b.life <= 0) { enemyBullets.splice(i, 1); continue; }
+    if (dist(b, player) < 18 && player.invincible <= 0) {
+      damagePlayer(b.damage);
+      enemyBullets.splice(i, 1);
+    }
+  }
+
+  /* -- Particles -- */
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.96; p.vy *= 0.96;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  /* -- Camera -- */
+  updateCamera(player);
+
+  /* -- Game Over check -- */
+  if (player.oil <= 0) {
+    player.oil = 0;
+    player.alive = false;
+    gameState = "gameover";
+    spawnExplosion(player.x, player.y, "#ff2200", 30);
+  }
+}
+
+function damagePlayer(amount) {
+  if (player.invincible > 0) return;
+  player.oil -= amount;
+  player.invincible = 0.5;
+  spawnOilSpill(player.x, player.y);
+}
+
+/* ===== DRAW ===== */
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(-camera.x, -camera.y);
+
+  drawWater();
+  drawRigs();
+  drawEnemies();
+  drawBullets();
+  drawPlayer();
+  drawParticles();
+
+  ctx.restore();
+
+  drawHUD();
+  drawTouchControls();
+}
+
+function drawWater() {
+  const sx = Math.floor(camera.x / TILE);
+  const sy = Math.floor(camera.y / TILE);
+  const ex = Math.ceil((camera.x + W) / TILE);
+  const ey = Math.ceil((camera.y + H) / TILE);
+  for (let y = sy; y <= ey; y++) {
+    for (let x = sx; x <= ex; x++) {
+      ctx.fillStyle = (x + y) % 2 === 0 ? WATER_COLOR_A : WATER_COLOR_B;
+      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+    }
+  }
+  // Subtle wave shimmer
+  ctx.fillStyle = "rgba(100,180,255,0.03)";
+  const wave = Math.sin(time * 2) * 10;
+  for (let y = sy; y <= ey; y += 2) {
+    ctx.fillRect(sx * TILE + wave, y * TILE, (ex - sx) * TILE, 2);
+  }
+}
+
+function drawRigs() {
+  for (const rig of rigs) {
+    if (rig.hp <= 0) {
+      // Destroyed rig
+      ctx.fillStyle = "#333";
+      ctx.fillRect(rig.x - 15, rig.y - 15, 30, 30);
+      continue;
+    }
+
+    // Platform
+    ctx.fillStyle = rig.owner === "player" ? "#227744" : "#666";
+    ctx.fillRect(rig.x - 22, rig.y - 22, 44, 44);
+    ctx.strokeStyle = rig.owner === "player" ? "#44ff88" : "#999";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(rig.x - 22, rig.y - 22, 44, 44);
+
+    // Derrick
+    ctx.fillStyle = "#aaa";
+    ctx.fillRect(rig.x - 4, rig.y - 18, 8, 16);
+    ctx.fillStyle = "#ff6600";
+    ctx.beginPath();
+    ctx.arc(rig.x, rig.y - 20, 4 + Math.sin(time * 4) * 1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // HP bar
+    if (rig.owner === "player") {
+      const barW = 40;
+      ctx.fillStyle = "#333";
+      ctx.fillRect(rig.x - barW / 2, rig.y + 28, barW, 4);
+      ctx.fillStyle = "#44ff88";
+      ctx.fillRect(rig.x - barW / 2, rig.y + 28, barW * (rig.hp / rig.maxHp), 4);
+    }
+
+    // Capture progress
+    if (rig.captureProgress > 0 && rig.owner !== "player") {
+      ctx.strokeStyle = "#ffcc00";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(rig.x, rig.y, CAPTURE_RADIUS, -Math.PI / 2,
+        -Math.PI / 2 + (rig.captureProgress / CAPTURE_TIME) * Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Tether line when capturing
+    if (rig.captureProgress > 0 && rig.owner !== "player") {
+      ctx.strokeStyle = "rgba(255,204,0,0.5)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(player.x, player.y);
+      ctx.lineTo(rig.x, rig.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+}
+
+function drawPlayer() {
+  if (!player.alive) return;
+  const px = player.x, py = player.y;
+  const a = player.angle;
+
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(a);
+
+  // Flash when invincible
+  if (player.invincible > 0 && Math.sin(time * 30) > 0) {
+    ctx.globalAlpha = 0.4;
+  }
+
+  // Body
+  ctx.fillStyle = "#2a5a2a";
+  ctx.beginPath();
+  ctx.moveTo(18, 0);
+  ctx.lineTo(-12, -10);
+  ctx.lineTo(-8, 0);
+  ctx.lineTo(-12, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "#4a8a4a";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Cockpit
+  ctx.fillStyle = "#88ccff";
+  ctx.beginPath();
+  ctx.ellipse(8, 0, 5, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tail
+  ctx.fillStyle = "#1a3a1a";
+  ctx.fillRect(-16, -2, 8, 4);
+
+  ctx.restore();
+
+  // Rotor (not rotated with body)
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(player.rotorAngle);
+  ctx.strokeStyle = "rgba(200,200,200,0.5)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-16, 0);
+  ctx.lineTo(16, 0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, -16);
+  ctx.lineTo(0, 16);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.globalAlpha = 1;
+
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.15)";
+  ctx.beginPath();
+  ctx.ellipse(px + 8, py + 12, 14, 8, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawEnemies() {
+  for (const e of enemies) {
+    ctx.save();
+    ctx.translate(e.x, e.y);
+
+    if (e.type === "drone") {
+      ctx.rotate(e.angle);
+      ctx.fillStyle = "#cc2222";
+      ctx.beginPath();
+      ctx.moveTo(10, 0);
+      ctx.lineTo(-8, -7);
+      ctx.lineTo(-5, 0);
+      ctx.lineTo(-8, 7);
+      ctx.closePath();
+      ctx.fill();
+      // Wings
+      ctx.fillStyle = "#881111";
+      ctx.fillRect(-4, -10, 6, 3);
+      ctx.fillRect(-4, 7, 6, 3);
+    }
+
+    if (e.type === "plane") {
+      ctx.rotate(e.angle);
+      ctx.fillStyle = "#888";
+      ctx.beginPath();
+      ctx.moveTo(16, 0);
+      ctx.lineTo(-10, -14);
+      ctx.lineTo(-6, 0);
+      ctx.lineTo(-10, 14);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#666";
+      ctx.fillRect(-14, -4, 8, 8);
+      // Stripe
+      ctx.fillStyle = "#cc0000";
+      ctx.fillRect(-2, -1, 12, 2);
+    }
+
+    if (e.type === "chopper") {
+      ctx.rotate(e.angle);
+      // Body
+      ctx.fillStyle = "#993333";
+      ctx.beginPath();
+      ctx.moveTo(14, 0);
+      ctx.lineTo(-10, -8);
+      ctx.lineTo(-6, 0);
+      ctx.lineTo(-10, 8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#ffaa44";
+      ctx.beginPath();
+      ctx.ellipse(6, 0, 4, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Rotor
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.rotate(e.rotorAngle || 0);
+      ctx.strokeStyle = "rgba(200,100,100,0.5)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-14, 0);
+      ctx.lineTo(14, 0);
+      ctx.stroke();
+      ctx.restore();
+
+      // HP bar
+      ctx.fillStyle = "#333";
+      ctx.fillRect(e.x - 15, e.y - 22, 30, 3);
+      ctx.fillStyle = "#ff4444";
+      ctx.fillRect(e.x - 15, e.y - 22, 30 * (e.hp / e.maxHp), 3);
+      continue; // Already restored
+    }
+
+    ctx.restore();
+
+    // HP bar for drones and planes
+    if (e.hp < e.maxHp) {
+      ctx.fillStyle = "#333";
+      ctx.fillRect(e.x - 12, e.y - 20, 24, 3);
+      ctx.fillStyle = "#ff4444";
+      ctx.fillRect(e.x - 12, e.y - 20, 24 * (e.hp / e.maxHp), 3);
+    }
+  }
+}
+
+function drawBullets() {
+  // Player bullets
+  ctx.fillStyle = "#ffee55";
+  for (const b of bullets) {
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Enemy bullets
+  ctx.fillStyle = "#ff3333";
+  for (const b of enemyBullets) {
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Homing missiles
+  for (const m of homingMissiles) {
+    ctx.save();
+    ctx.translate(m.x, m.y);
+    ctx.rotate(m.angle);
+    ctx.fillStyle = "#ff8800";
+    ctx.fillRect(-6, -2, 12, 4);
+    ctx.fillStyle = "#ffcc00";
+    ctx.fillRect(-8, -1, 4, 2);
+    ctx.restore();
+    // Trail
+    spawnExplosion(m.x - Math.cos(m.angle) * 6, m.y - Math.sin(m.angle) * 6, "#ff6600", 1);
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const alpha = clamp(p.life / p.maxLife, 0, 1);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * alpha, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ===== HUD ===== */
+function drawHUD() {
+  const pad = 16;
+  const barW = Math.min(220, W * 0.35);
+  const barH = 18;
+
+  // Oil bar
+  const oilPct = player.oil / OIL_MAX;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(pad - 2, pad - 2, barW + 4, barH + 4);
+  ctx.fillStyle = "#222";
+  ctx.fillRect(pad, pad, barW, barH);
+
+  // Color gradient based on oil level
+  let oilColor;
+  if (oilPct > 0.5) oilColor = "#44dd44";
+  else if (oilPct > 0.25) oilColor = "#dddd44";
+  else oilColor = "#dd4444";
+  ctx.fillStyle = oilColor;
+  ctx.fillRect(pad, pad, barW * oilPct, barH);
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 12px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(`OIL: ${Math.floor(player.oil)} / ${OIL_MAX}`, pad + 4, pad + 14);
+
+  // Score
+  ctx.textAlign = "right";
+  ctx.font = "bold 16px monospace";
+  ctx.fillStyle = "#ffcc00";
+  ctx.fillText(`SCORE: ${score}`, W - pad, pad + 16);
+
+  // Wanted level stars
+  ctx.font = "bold 14px monospace";
+  ctx.fillStyle = "#ff4444";
+  ctx.textAlign = "right";
+  let stars = "";
+  for (let i = 0; i < wantedLevel; i++) stars += "★";
+  if (stars) ctx.fillText(`WANTED: ${stars}`, W - pad, pad + 36);
+
+  // Weapon status
+  ctx.textAlign = "left";
+  ctx.font = "12px monospace";
+  const y = pad + barH + 12;
+  ctx.fillStyle = player.oil >= DUAL_CANNON_THRESHOLD ? "#44ff88" : "#666";
+  ctx.fillText("● DUAL CANNONS" + (player.oil >= DUAL_CANNON_THRESHOLD ? "" : ` (${DUAL_CANNON_THRESHOLD} oil)`), pad, y);
+
+  ctx.fillStyle = player.oil >= HOMING_THRESHOLD ? "#ff8844" : "#666";
+  ctx.fillText("● HOMING MISSILES" + (player.oil >= HOMING_THRESHOLD ? " [E/RMB]" : ` (${HOMING_THRESHOLD} oil)`), pad, y + 16);
+
+  // Minimap
+  const mmSize = Math.min(120, W * 0.2);
+  const mmX = W - mmSize - pad;
+  const mmY = H - mmSize - pad;
+  ctx.fillStyle = "rgba(0,20,40,0.7)";
+  ctx.fillRect(mmX, mmY, mmSize, mmSize);
+  ctx.strokeStyle = "#446";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(mmX, mmY, mmSize, mmSize);
+
+  const mmScale = mmSize / WORLD_W;
+
+  // Rigs on minimap
+  for (const rig of rigs) {
+    if (rig.hp <= 0) continue;
+    ctx.fillStyle = rig.owner === "player" ? "#44ff88" : "#888";
+    ctx.fillRect(mmX + rig.x * mmScale - 2, mmY + rig.y * mmScale - 2, 4, 4);
+  }
+
+  // Enemies on minimap
+  ctx.fillStyle = "#ff4444";
+  for (const e of enemies) {
+    ctx.fillRect(mmX + e.x * mmScale - 1, mmY + e.y * mmScale - 1, 2, 2);
+  }
+
+  // Player on minimap
+  ctx.fillStyle = "#44ff44";
+  ctx.fillRect(mmX + player.x * mmScale - 2, mmY + player.y * mmScale - 2, 4, 4);
+}
+
+function drawTouchControls() {
+  if (!("ontouchstart" in window)) return;
+
+  // Virtual joystick area hint
+  ctx.fillStyle = "rgba(255,255,255,0.05)";
+  ctx.fillRect(0, 0, W * 0.5, H);
+
+  if (joystickCenter) {
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(joystickCenter.x, joystickCenter.y, JOYSTICK_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const knobX = joystickCenter.x + touchMove.x * JOYSTICK_RADIUS;
+    const knobY = joystickCenter.y + touchMove.y * JOYSTICK_RADIUS;
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.beginPath();
+    ctx.arc(knobX, knobY, 20, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Fire button hint
+  const btnSize = 50;
+  const btnX = W - btnSize - 30;
+  const btnY = H - btnSize - 30;
+  ctx.strokeStyle = touchFire ? "rgba(255,200,0,0.6)" : "rgba(255,255,255,0.2)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(btnX, btnY, btnSize / 2, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.15)";
+  ctx.font = "12px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("FIRE", btnX, btnY + 4);
+
+  // Missile button
+  if (player.oil >= HOMING_THRESHOLD) {
+    const mBtnY = H * 0.3;
+    ctx.strokeStyle = touchMissile ? "rgba(255,130,0,0.6)" : "rgba(255,130,0,0.2)";
+    ctx.beginPath();
+    ctx.arc(btnX, mBtnY, btnSize / 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,130,0,0.15)";
+    ctx.fillText("MISSILE", btnX, mBtnY + 4);
+  }
+}
+
+/* ===== TITLE SCREEN ===== */
+function drawTitle() {
+  ctx.fillStyle = "#0a1a2a";
+  ctx.fillRect(0, 0, W, H);
+
+  // Animated background
+  const t = performance.now() / 1000;
+  for (let i = 0; i < 20; i++) {
+    ctx.fillStyle = `rgba(255,140,0,${0.02 + Math.sin(t + i) * 0.01})`;
+    const bx = (Math.sin(t * 0.3 + i * 1.3) * 0.5 + 0.5) * W;
+    const by = (Math.cos(t * 0.2 + i * 0.9) * 0.5 + 0.5) * H;
+    ctx.beginPath();
+    ctx.arc(bx, by, 40 + Math.sin(t + i) * 20, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.textAlign = "center";
+
+  // Title
+  ctx.fillStyle = "#ff8800";
+  ctx.font = `bold ${Math.min(48, W * 0.08)}px monospace`;
+  ctx.fillText("BLACK GOLD BLITZ", W / 2, H * 0.25);
+
+  ctx.fillStyle = "#ffcc44";
+  ctx.font = `${Math.min(18, W * 0.035)}px monospace`;
+  ctx.fillText("Top-Down Arcade Shooter", W / 2, H * 0.32);
+
+  // Instructions
+  ctx.fillStyle = "#aaa";
+  ctx.font = `${Math.min(14, W * 0.028)}px monospace`;
+  const lines = [
+    "WASD / Arrows — Move",
+    "Mouse Aim — Shoot with SPACE or LMB",
+    "E / RMB — Homing Missiles (1000+ oil)",
+    "",
+    "Capture oil rigs by flying near them",
+    "Oil = Health + Power + Score",
+    "0 Oil = Game Over!",
+    "",
+    "Touch: Left side = move, Right = fire",
+  ];
+  lines.forEach((line, i) => {
+    ctx.fillText(line, W / 2, H * 0.44 + i * (Math.min(20, W * 0.035)));
+  });
+
+  // Start prompt
+  ctx.fillStyle = Math.sin(t * 3) > 0 ? "#ffcc00" : "#ff8800";
+  ctx.font = `bold ${Math.min(22, W * 0.04)}px monospace`;
+  ctx.fillText("[ CLICK or TAP to START ]", W / 2, H * 0.88);
+}
+
+function drawGameOver() {
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ff3333";
+  ctx.font = `bold ${Math.min(48, W * 0.08)}px monospace`;
+  ctx.fillText("GAME OVER", W / 2, H * 0.35);
+
+  ctx.fillStyle = "#ffcc00";
+  ctx.font = `bold ${Math.min(28, W * 0.05)}px monospace`;
+  ctx.fillText(`FINAL SCORE: ${score}`, W / 2, H * 0.48);
+
+  ctx.fillStyle = "#aaa";
+  ctx.font = `${Math.min(16, W * 0.03)}px monospace`;
+  ctx.fillText(`Oil Rigs Captured: ${rigs.filter(r => r.owner === "player").length} / ${RIG_COUNT}`, W / 2, H * 0.56);
+
+  const t = performance.now() / 1000;
+  ctx.fillStyle = Math.sin(t * 3) > 0 ? "#ffcc00" : "#ff8800";
+  ctx.font = `bold ${Math.min(20, W * 0.035)}px monospace`;
+  ctx.fillText("[ CLICK or TAP to RESTART ]", W / 2, H * 0.72);
+}
+
+/* ===== GAME RESET ===== */
+function startGame() {
+  score = 0;
+  waveTimer = 2;
+  wantedLevel = 0;
+  time = 0;
+  enemies.length = 0;
+  bullets.length = 0;
+  enemyBullets.length = 0;
+  homingMissiles.length = 0;
+  particles.length = 0;
+  resetPlayer();
+  initRigs();
+  gameState = "playing";
+}
+
+/* ===== START LISTENER ===== */
+canvas.addEventListener("click", () => {
+  if (gameState === "title" || gameState === "gameover") {
+    startGame();
+  }
+});
+canvas.addEventListener("touchstart", (e) => {
+  if (gameState === "title" || gameState === "gameover") {
+    startGame();
+    e.preventDefault();
+  }
+}, { passive: false, once: false });
+
+/* ===== MAIN LOOP ===== */
+let lastTime = performance.now();
+function gameLoop(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05); // Cap dt
+  lastTime = now;
+
+  if (gameState === "playing") {
+    update(dt);
+    draw();
+  } else if (gameState === "title") {
+    drawTitle();
+  } else if (gameState === "gameover") {
+    draw(); // Draw final frame
+    drawGameOver();
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
