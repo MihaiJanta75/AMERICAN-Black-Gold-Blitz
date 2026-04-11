@@ -42,7 +42,8 @@ export default class GameScene extends Phaser.Scene {
     s.H = window.innerHeight;
     this._gameCanvas = document.getElementById('game-canvas');
     if (!this._gameCanvas) {
-      // Fallback: create canvas dynamically if not in HTML
+      // Expected element is missing from index.html — log a warning
+      console.warn('Black Gold Blitz: #game-canvas element not found; falling back to dynamic canvas creation.');
       this._gameCanvas = document.createElement('canvas');
       this._gameCanvas.id = 'game-canvas';
       this._gameCanvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;';
