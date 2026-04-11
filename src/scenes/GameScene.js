@@ -1,12 +1,13 @@
 import Phaser from 'phaser';
 import { removeLoadingScreen } from '../loadingScreen.js';
-import { WORLD_W, WORLD_H, JOYSTICK_RADIUS, DASH_DURATION, DASH_COOLDOWN, HOMING_THRESHOLD, UPGRADE_INTERVAL } from '../constants.js';
+import { WORLD_W, WORLD_H, JOYSTICK_RADIUS, DASH_DURATION, DASH_COOLDOWN, HOMING_THRESHOLD } from '../constants.js';
 import { rand, lerp, clamp } from '../utils.js';
-import { UPGRADES } from '../config.js';
+import { UPGRADES, MUTATIONS } from '../config.js';
 import {
   state, resetGameState, getMaxOil, getUpgradeChoices, applyUpgrade,
-  allocateStat, hasPowerup, addScreenFlash, addShake,
+  hasPowerup, addScreenFlash, addShake,
   spawnExplosion, spawnFloatingText,
+  getMilestoneChoices, applyMilestone,
 } from '../state/GameState.js';
 import { getSettings, toggleSetting, getHighScore, saveHighScore } from '../SettingsManager.js';
 import { initAudio, playSound } from '../SoundManager.js';
@@ -14,16 +15,17 @@ import { initAudio, playSound } from '../SoundManager.js';
 // Logic
 import { updatePlayer } from '../logic/playerLogic.js';
 import { spawnWave, updateEnemies, updateRigRecapture } from '../logic/enemyLogic.js';
-import { updateCombat, updateRigs, updateLoot } from '../logic/combatLogic.js';
+import { updateCombat, updateRigs, updateLoot, updateEvents, updateWrecks, updatePipelines } from '../logic/combatLogic.js';
 
 // Rendering
 import { drawWater } from '../rendering/drawWorld.js';
+import { drawTerritories } from '../rendering/drawTerritories.js';
 import { drawPlayer, drawOrbitals, drawShadows } from '../rendering/drawPlayer.js';
 import { drawEnemies } from '../rendering/drawEnemies.js';
 import { drawRigs } from '../rendering/drawRigs.js';
-import { drawBullets, drawLoot, drawParticles, drawFloatingTexts } from '../rendering/drawEffects.js';
-import { drawHUD, drawStatPanel, drawTouchControls, drawScreenEffects } from '../rendering/drawHUD.js';
-import { drawTitle, drawGameOver, drawUpgradeScreen, drawPauseScreen } from '../rendering/drawScreens.js';
+import { drawBullets, drawLoot, drawParticles, drawFloatingTexts, drawNapalmZones, drawWrecks, drawActiveEvent } from '../rendering/drawEffects.js';
+import { drawHUD, drawTouchControls, drawScreenEffects } from '../rendering/drawHUD.js';
+import { drawTitle, drawGameOver, drawUpgradeScreen, drawPauseScreen, drawMilestoneScreen } from '../rendering/drawScreens.js';
 
 export default class GameScene extends Phaser.Scene {
   constructor() { super('GameScene'); }
@@ -32,6 +34,7 @@ export default class GameScene extends Phaser.Scene {
     const s = state;
     this.s = s;
     this.isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    s.isTouchDevice = this.isTouchDevice;
 
     // Set up dimensions and draw directly to Phaser's canvas via postrender
     s.W = this.scale.width || window.innerWidth;
@@ -48,7 +51,6 @@ export default class GameScene extends Phaser.Scene {
     if (this.input.keyboard) {
       this.input.keyboard.on('keydown', (e) => {
         s.input.keys[e.code] = true;
-        if (s.gameState === 'playing' && e.key >= '1' && e.key <= '8') allocateStat(s, parseInt(e.key) - 1);
         if (e.code === 'KeyP' || e.code === 'Escape') this.togglePause();
         if (e.code === 'KeyF') { toggleSetting('autoFire'); }
       });
@@ -71,10 +73,12 @@ export default class GameScene extends Phaser.Scene {
         this.handleUpgradeClick(pointer.x, pointer.y);
       } else if (s.gameState === 'paused') {
         this.handlePauseClick(pointer.x, pointer.y);
+      } else if (s.gameState === 'milestone') {
+        this.handleMilestoneClick(pointer.x, pointer.y);
       }
     });
     this.input.on('pointerup', (pointer) => {
-      if (pointer.rightButtonReleased) s.input.rightMouseDown = false;
+      if (pointer.rightButtonReleased()) s.input.rightMouseDown = false;
       else s.input.mouseDown = false;
     });
 
@@ -116,6 +120,10 @@ export default class GameScene extends Phaser.Scene {
 
   startGame() {
     resetGameState(this.s);
+    // Ensure napalmZones array exists after reset
+    if (!this.s.napalmZones) this.s.napalmZones = [];
+    if (!this.s.killFeed) this.s.killFeed = [];
+    if (!this.s.oilIncomeRate) this.s.oilIncomeRate = 0;
   }
 
   togglePause() {
@@ -139,7 +147,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (s.gameState === 'upgrade') { this.handleUpgradeTouchEvent(e); return; }
-    if (s.gameState === 'playing' && s.showStatPanel) { this.handleStatTouch(e); }
+    if (s.gameState === 'milestone') { for (const t of e.changedTouches) this.handleMilestoneClick(t.clientX, t.clientY); return; }
     if (s.gameState === 'paused') return;
     if (s.gameState !== 'playing') return;
 
@@ -161,7 +169,7 @@ export default class GameScene extends Phaser.Scene {
           const dashA = Math.atan2(s.input.touchMove.y, s.input.touchMove.x);
           s.player.dashing = DASH_DURATION;
           s.player.dashAngle = dashA;
-          s.player.dashCooldown = DASH_COOLDOWN;
+          s.player.dashCooldown = Math.max(0.5, DASH_COOLDOWN - (s.upgradeStats.dashCooldownBonus || 0));
           this.soundFn('dash');
           addScreenFlash(s, '#44ccff', 0.1);
         }
@@ -226,16 +234,6 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  handleStatTouch(e) {
-    const s = this.s;
-    for (const t of e.changedTouches) {
-      if (t.clientX < 200 && s.statPoints > 0) {
-        const idx = Math.floor((t.clientY - 80) / 28);
-        if (idx >= 0 && idx < 8) allocateStat(s, idx);
-      }
-    }
-  }
-
   handleUpgradeTouchEvent(e) {
     for (const t of e.changedTouches) this.handleUpgradeClick(t.clientX, t.clientY);
   }
@@ -244,17 +242,84 @@ export default class GameScene extends Phaser.Scene {
     const s = this.s;
     if (s.upgradeChoices.length === 0) return;
     const { W, H } = s;
-    const cardW = Math.min(200, W * 0.28);
-    const cardH = Math.min(260, H * 0.45);
-    const gap = Math.min(30, W * 0.03);
-    const totalW2 = s.upgradeChoices.length * cardW + (s.upgradeChoices.length - 1) * gap;
-    const startX = (W - totalW2) / 2;
-    const startY = (H - cardH) / 2;
-    for (let i = 0; i < s.upgradeChoices.length; i++) {
+
+    // Skip button
+    const skipW = 180, skipH = 44;
+    const skipX = (W - skipW) / 2, skipY = H * 0.91;
+    if (mx >= skipX && mx <= skipX + skipW && my >= skipY && my <= skipY + skipH) {
+      s.upgradeChoices = [];
+      s.gameState = 'playing';
+      return;
+    }
+
+    const choices = s.upgradeChoices;
+    const synergyKey = choices.find(k => k && UPGRADES[k]?.synergy);
+    const mutationKey = choices.find(k => k && MUTATIONS[k]);
+    const regularChoices = choices.filter(k => k && !UPGRADES[k]?.synergy && !MUTATIONS[k]);
+    const hasSpecial = synergyKey || mutationKey;
+
+    const cardW = Math.min(Math.floor(W * 0.28), 260);
+    const cardH = Math.min(Math.floor(H * 0.62), 480);
+    const gap = Math.max(10, Math.floor(W * 0.022));
+    const totalW = regularChoices.length * cardW + (regularChoices.length - 1) * gap;
+    const startX = (W - totalW) / 2;
+    const startY = hasSpecial ? H * 0.14 : H * 0.15;
+
+    // Regular cards
+    for (let i = 0; i < regularChoices.length; i++) {
       const cx = startX + i * (cardW + gap);
       if (mx >= cx && mx <= cx + cardW && my >= startY && my <= startY + cardH) {
-        applyUpgrade(s, s.upgradeChoices[i]);
+        applyUpgrade(s, regularChoices[i]);
         s.upgradeChoices = [];
+        s.gameState = 'playing';
+        return;
+      }
+    }
+
+    const synH = Math.min(110, H * 0.18);
+    let nextY = startY + cardH + 14;
+
+    // Synergy card (rendered at nextY, wider)
+    if (synergyKey) {
+      const synW = Math.min(380, W * 0.55);
+      const synX = (W - synW) / 2;
+      if (mx >= synX && mx <= synX + synW && my >= nextY && my <= nextY + synH) {
+        applyUpgrade(s, synergyKey);
+        s.upgradeChoices = [];
+        s.gameState = 'playing';
+        return;
+      }
+      nextY += synH + 14;
+    }
+
+    // Mutation card (rendered below synergy)
+    if (mutationKey) {
+      const mutW = Math.min(380, W * 0.55);
+      const mutX = (W - mutW) / 2;
+      if (mx >= mutX && mx <= mutX + mutW && my >= nextY && my <= nextY + synH) {
+        applyUpgrade(s, mutationKey);
+        s.upgradeChoices = [];
+        s.gameState = 'playing';
+        return;
+      }
+    }
+  }
+
+  handleMilestoneClick(mx, my) {
+    const s = this.s;
+    if (s.milestoneChoices.length === 0) { s.gameState = 'playing'; return; }
+    const { W, H } = s;
+    const cardW = Math.min(200, W * 0.28);
+    const cardH = Math.min(240, H * 0.40);
+    const gap = Math.min(28, W * 0.03);
+    const totalW = s.milestoneChoices.length * cardW + (s.milestoneChoices.length - 1) * gap;
+    const startX = (W - totalW) / 2;
+    const startY = (H - cardH) / 2;
+    for (let i = 0; i < s.milestoneChoices.length; i++) {
+      const cx = startX + i * (cardW + gap);
+      if (mx >= cx && mx <= cx + cardW && my >= startY && my <= startY + cardH) {
+        applyMilestone(s, s.milestoneChoices[i]);
+        s.milestoneChoices = [];
         s.gameState = 'playing';
         return;
       }
@@ -291,6 +356,9 @@ export default class GameScene extends Phaser.Scene {
 
     if (s.gameState === 'playing') {
       this.updateGame(dt, sfn);
+    } else if (s.gameState === 'milestone') {
+      // Gently tick timers so world doesn't freeze, but don't spawn waves or enemies
+      s.time += dt;
     }
   }
 
@@ -303,6 +371,32 @@ export default class GameScene extends Phaser.Scene {
     s.comboTimer -= dt; if (s.comboTimer <= 0) { s.combo = 0; s.comboTimer = 0; }
     s.streakTimer -= dt; if (s.streakTimer <= 0) { s.killStreak = 0; s.streakTimer = 0; }
 
+    // Score multiplier decay — punishes passive play
+    if (!s.scoreMult) s.scoreMult = 1.0;
+    s.scoreMult = Math.max(1.0, s.scoreMult - 0.018 * dt * 60);
+
+    // Rampage timer
+    if (s.player.rampageActive) {
+      s.player.rampageTimer = (s.player.rampageTimer || 0) + dt;
+    }
+
+    // Bounty contract timer
+    if (s.bountyTimer !== undefined) {
+      s.bountyTimer -= dt;
+      if (s.bountyTimer <= 0) {
+        if (s.bountyTarget) { s.bountyTarget.isBounty = false; s.bountyTarget = null; }
+        s.bountyTimer = 45 + Math.random() * 20;
+        // Pick new bounty target from live enemies (prefer commanders/choppers)
+        const candidates = s.enemies.filter(e => e.hp > 0);
+        if (candidates.length > 0) {
+          const weighted = candidates.filter(e => e.subType === 'command' || e.isBoss || e.type === 'chopper');
+          const chosen = (weighted.length > 0 && Math.random() < 0.6) ? weighted[Math.floor(Math.random() * weighted.length)] : candidates[Math.floor(Math.random() * candidates.length)];
+          chosen.isBounty = true;
+          s.bountyTarget = chosen;
+        }
+      }
+    }
+
     // Powerup timers
     for (const k in s.activePowerups) { s.activePowerups[k] -= dt; if (s.activePowerups[k] <= 0) delete s.activePowerups[k]; }
 
@@ -313,9 +407,12 @@ export default class GameScene extends Phaser.Scene {
     updatePlayer(s, dt, soundFn);
     updateRigs(s, dt);
     updateRigRecapture(s, dt);
+    updatePipelines(s, dt, soundFn);
+    updateEvents(s, dt, soundFn);
     spawnWave(s, dt);
     updateEnemies(s, dt, soundFn);
     updateCombat(s, dt, soundFn);
+    updateWrecks(s, dt, soundFn);
     updateLoot(s, dt, soundFn);
 
     // Particles
@@ -340,21 +437,55 @@ export default class GameScene extends Phaser.Scene {
     // Camera
     this.updateCamera();
 
-    // Upgrade check
-    if (s.score >= s.nextUpgradeScore) {
-      s.nextUpgradeScore += UPGRADE_INTERVAL + s.totalUpgrades * 100;
+    // Level-up upgrade check (XP-based — fires once per level-up)
+    if (s.pendingLevelUp && s.gameState === 'playing') {
+      s.pendingLevelUp = false;
       s.upgradeChoices = getUpgradeChoices(s);
-      if (s.upgradeChoices.length > 0) s.gameState = 'upgrade';
+      if (s.upgradeChoices.length > 0) { s.isBountyUpgrade = false; s.gameState = 'upgrade'; }
     }
 
-    // Death
+    // Milestone check
+    if (s.score >= s.nextMilestoneScore) {
+      const choices = getMilestoneChoices(s);
+      if (choices.length > 0) {
+        s.milestoneChoices = choices;
+        s.gameState = 'milestone';
+      } else {
+        // All milestones unlocked, just push threshold
+        s.nextMilestoneScore += 1000;
+      }
+    }
+
+    // Bounty card (from commander kills / supply drops)
+    if (s.bountyCards.length > 0 && s.gameState === 'playing') {
+      s.upgradeChoices = [s.bountyCards.shift()];
+      s.isBountyUpgrade = true;
+      s.gameState = 'upgrade';
+    }
+
+    // Death — phoenix wildcard first, then second_wind milestone
     if (s.player.oil <= 0) {
-      s.player.oil = 0; s.player.alive = false; s.gameState = 'gameover';
-      spawnExplosion(s, s.player.x, s.player.y, '#ff2200', 40);
-      addShake(s, 12, true);
-      addScreenFlash(s, '#ff0000', 0.4);
-      this.soundFn('explosion', 0.6);
-      saveHighScore(s.score);
+      if (s.upgradeStats.hasPhoenix && !s.upgradeStats.phoenixUsed) {
+        s.upgradeStats.phoenixUsed = true;
+        s.player.oil = Math.floor(getMaxOil(s) * 0.5);
+        s.player.invincible = 3.0;
+        spawnFloatingText(s, s.player.x, s.player.y - 50, '🔥 PHOENIX RISE!', '#ff8800', 22);
+        addScreenFlash(s, '#441100', 0.4);
+        addShake(s, 8, true);
+      } else if (s.milestoneUnlocks?.second_wind && !s.secondWindUsed) {
+        s.secondWindUsed = true;
+        s.player.oil = 25;
+        s.player.invincible = 2.0;
+        spawnFloatingText(s, s.player.x, s.player.y - 40, '💨 SECOND WIND!', '#44ccff', 18);
+        addScreenFlash(s, '#003344', 0.3);
+      } else {
+        s.player.oil = 0; s.player.alive = false; s.gameState = 'gameover';
+        spawnExplosion(s, s.player.x, s.player.y, '#ff2200', 40);
+        addShake(s, 12, true);
+        addScreenFlash(s, '#ff0000', 0.4);
+        this.soundFn('explosion', 0.6);
+        saveHighScore(s.score);
+      }
     }
   }
 
@@ -391,16 +522,20 @@ export default class GameScene extends Phaser.Scene {
 
       if (s.gameState === 'title') {
         drawTitle(ctx, s);
-      } else if (s.gameState === 'playing' || s.gameState === 'upgrade' || s.gameState === 'paused' || s.gameState === 'gameover') {
+      } else if (s.gameState === 'playing' || s.gameState === 'upgrade' || s.gameState === 'milestone' || s.gameState === 'paused' || s.gameState === 'gameover') {
         // Draw world
         ctx.save();
         if (s.shakeAmount > 0) ctx.translate(rand(-s.shakeAmount, s.shakeAmount), rand(-s.shakeAmount, s.shakeAmount));
         ctx.translate(-s.camera.x, -s.camera.y);
         drawWater(ctx, s);
+        drawTerritories(ctx, s);
+        drawNapalmZones(ctx, s);
+        drawActiveEvent(ctx, s);
         drawRigs(ctx, s);
         drawLoot(ctx, s);
         drawShadows(ctx, s);
         drawEnemies(ctx, s);
+        drawWrecks(ctx, s);
         drawBullets(ctx, s);
         drawOrbitals(ctx, s);
         drawPlayer(ctx, s);
@@ -410,13 +545,13 @@ export default class GameScene extends Phaser.Scene {
 
         // HUD
         drawHUD(ctx, s, settings);
-        drawStatPanel(ctx, s);
         drawTouchControls(ctx, s, settings, this.isTouchDevice);
         drawScreenEffects(ctx, s);
 
         // Overlay screens
         if (s.gameState === 'gameover') drawGameOver(ctx, s);
         else if (s.gameState === 'upgrade') drawUpgradeScreen(ctx, s);
+        else if (s.gameState === 'milestone') drawMilestoneScreen(ctx, s);
         else if (s.gameState === 'paused') drawPauseScreen(ctx, s, settings);
       }
     } catch (err) {

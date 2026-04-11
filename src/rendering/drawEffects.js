@@ -1,4 +1,5 @@
 import { clamp, rand } from '../utils.js';
+import { PIPELINE_HP } from '../constants.js';
 
 export function drawBullets(ctx, s) {
   for (const b of s.bullets) {
@@ -25,6 +26,31 @@ export function drawBullets(ctx, s) {
     ctx.fillStyle = '#ffaa00'; ctx.beginPath(); ctx.arc(-7, 0, 2 + Math.sin(s.time * 30) * 0.5, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
+}
+
+export function drawNapalmZones(ctx, s) {
+  if (!s.napalmZones || s.napalmZones.length === 0) return;
+  const t = s.time;
+  for (const nz of s.napalmZones) {
+    const lifePct = nz.life / nz.maxLife;
+    const alpha = lifePct * 0.65;
+    // Outer glow
+    ctx.globalAlpha = alpha * 0.35;
+    const grad = ctx.createRadialGradient(nz.x, nz.y, 0, nz.x, nz.y, nz.radius * 1.8);
+    grad.addColorStop(0, '#ff6600');
+    grad.addColorStop(0.5, '#ff3300');
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(nz.x, nz.y, nz.radius * 1.8, 0, Math.PI * 2); ctx.fill();
+    // Core fire
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ff4400';
+    ctx.beginPath(); ctx.arc(nz.x, nz.y, nz.radius * (0.7 + Math.sin(t * 8 + nz.x) * 0.15), 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.fillStyle = '#ffcc00';
+    ctx.beginPath(); ctx.arc(nz.x, nz.y, nz.radius * (0.35 + Math.sin(t * 14 + nz.y) * 0.1), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 }
 
 export function drawLoot(ctx, s) {
@@ -76,6 +102,131 @@ export function drawParticles(ctx, s) {
     }
   }
   ctx.globalAlpha = 1;
+}
+
+export function drawWrecks(ctx, s) {
+  if (!s.wrecks || s.wrecks.length === 0) return;
+  for (const w of s.wrecks) {
+    const alpha = Math.min(1, w.life / w.maxLife) * 0.85;
+    ctx.save();
+    ctx.translate(w.x, w.y);
+    ctx.rotate(w.angle);
+    ctx.globalAlpha = alpha;
+    // Wreck body — metallic debris
+    ctx.fillStyle = '#444';
+    if (w.type === 'drone') {
+      ctx.fillRect(-10, -4, 20, 8);
+      ctx.fillRect(-4, -10, 8, 20);
+      ctx.fillStyle = '#333';
+      ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
+    } else if (w.type === 'plane') {
+      ctx.fillStyle = '#3a3a3a';
+      ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(-10, -5); ctx.lineTo(-10, 5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#555';
+      ctx.fillRect(-8, -1, 4, 2);
+    } else {
+      ctx.fillStyle = '#3a3a3a';
+      ctx.beginPath(); ctx.ellipse(0, 0, 12, 7, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#555';
+      ctx.fillRect(-4, -2, 8, 4);
+    }
+    // Oil slick glow
+    ctx.globalAlpha = alpha * 0.3;
+    ctx.fillStyle = '#1a0a00';
+    ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    // Oil label when life > 7s
+    if (w.life > 4) {
+      ctx.globalAlpha = Math.min(1, (w.life - 4) * 0.4);
+      ctx.font = 'bold 9px monospace'; ctx.fillStyle = '#88aacc'; ctx.textAlign = 'center';
+      ctx.fillText('+' + w.oil + ' oil', w.x, w.y - 18);
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+export function drawPipelines(ctx, s) {
+  if (!s.pipelines || s.pipelines.length === 0) return;
+  const t = s.time;
+  for (const pipe of s.pipelines) {
+    const ax = pipe.rigA.x, ay = pipe.rigA.y;
+    const bx = pipe.rigB.x, by = pipe.rigB.y;
+    const hpPct = pipe.hp / pipe.maxHp;
+    // Animated dashed line
+    ctx.save();
+    ctx.globalAlpha = 0.55 * hpPct;
+    ctx.strokeStyle = hpPct > 0.5 ? '#44ff88' : '#ff8844';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([12, 8]);
+    ctx.lineDashOffset = -t * 20;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.setLineDash([]);
+    // Glow pulse
+    ctx.globalAlpha = 0.12 * hpPct * (0.7 + Math.sin(t * 4) * 0.3);
+    ctx.strokeStyle = '#44ff88';
+    ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+}
+
+export function drawActiveEvent(ctx, s) {
+  const ev = s.activeEvent;
+  if (!ev) return;
+  const t = s.time;
+
+  if (ev.type === 'geyser') {
+    const { x, y } = ev.data;
+    ctx.save();
+    ctx.globalAlpha = 0.35 + Math.sin(t * 6) * 0.1;
+    // Bubbling area
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, 80);
+    grad.addColorStop(0, '#334444');
+    grad.addColorStop(0.5, '#1a2a2a');
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, 80, 0, Math.PI * 2); ctx.fill();
+    // Bubble particles
+    for (let i = 0; i < 6; i++) {
+      const ba = (i / 6) * Math.PI * 2 + t * (0.5 + i * 0.1);
+      const br = (20 + Math.sin(t * 3 + i) * 15);
+      ctx.globalAlpha = 0.4 + Math.sin(t * 4 + i * 0.5) * 0.2;
+      ctx.fillStyle = '#224433';
+      ctx.beginPath(); ctx.arc(x + Math.cos(ba) * br, y + Math.sin(ba) * br, 4 + Math.sin(t * 5 + i) * 2, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Label
+    ctx.font = 'bold 11px monospace'; ctx.fillStyle = '#44cc88'; ctx.textAlign = 'center';
+    ctx.fillText('⛽ GEYSER', x, y - 88);
+    ctx.restore();
+  }
+
+  if (ev.type === 'supply_drop' && !ev.data.claimed) {
+    const { x, y } = ev.data;
+    ev.data.bobPhase = (ev.data.bobPhase || 0) + 0.03;
+    const bob = Math.sin(ev.data.bobPhase) * 4;
+    ctx.save();
+    ctx.translate(x, y + bob);
+    // Crate
+    ctx.fillStyle = '#8B6914';
+    ctx.fillRect(-14, -14, 28, 28);
+    ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 2;
+    ctx.strokeRect(-14, -14, 28, 28);
+    ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-14, 0); ctx.lineTo(14, 0); ctx.moveTo(0, -14); ctx.lineTo(0, 14); ctx.stroke();
+    // Glowing parachute
+    ctx.globalAlpha = 0.6 + Math.sin(t * 3) * 0.2;
+    ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, -35, 18, Math.PI, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-18, -35); ctx.lineTo(-10, -14); ctx.moveTo(18, -35); ctx.lineTo(10, -14); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.font = 'bold 10px monospace'; ctx.fillStyle = '#ffcc00'; ctx.textAlign = 'center';
+    ctx.fillText('📦 SUPPLY', 0, 28);
+    ctx.restore();
+  }
 }
 
 export function drawFloatingTexts(ctx, s) {
