@@ -59,8 +59,6 @@ export default class GameScene extends Phaser.Scene {
       this._gameCanvas.height = s.H;
     };
     window.addEventListener('resize', this._resizeHandler);
-    this._postRenderHandler = () => this.render(getSettings());
-    this.game.events.on('postrender', this._postRenderHandler);
 
     // Keyboard input via Phaser (null-check for mobile environments)
     if (this.input.keyboard) {
@@ -99,7 +97,7 @@ export default class GameScene extends Phaser.Scene {
 
     this._loadingRemoved = false;
 
-    // Fallback: remove loading screen after 3s in case postrender never fires
+    // Fallback: remove loading screen after 3s in case update never fires
     setTimeout(() => removeLoadingScreen(), 3000);
 
     // Disable context menu
@@ -122,9 +120,6 @@ export default class GameScene extends Phaser.Scene {
   }
 
   shutdown() {
-    if (this._postRenderHandler) {
-      this.game.events.off('postrender', this._postRenderHandler);
-    }
     if (this._resizeHandler) {
       window.removeEventListener('resize', this._resizeHandler);
     }
@@ -378,6 +373,8 @@ export default class GameScene extends Phaser.Scene {
       // Gently tick timers so world doesn't freeze, but don't spawn waves or enemies
       s.time += dt;
     }
+
+    this.render(settings);
   }
 
   updateGame(dt, soundFn) {
