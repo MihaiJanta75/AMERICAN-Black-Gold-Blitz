@@ -11,7 +11,6 @@ const config = {
   backgroundColor: '#000000',
   scale: {
     mode: Phaser.Scale.RESIZE,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   input: {
     keyboard: true,

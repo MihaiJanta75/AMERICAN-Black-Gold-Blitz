@@ -36,14 +36,29 @@ export default class GameScene extends Phaser.Scene {
     this.isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
     s.isTouchDevice = this.isTouchDevice;
 
-    // Set up dimensions and draw directly to Phaser's canvas via postrender
-    s.W = this.scale.width || window.innerWidth;
-    s.H = this.scale.height || window.innerHeight;
-    this.ctx = this.game.canvas.getContext('2d');
-    this.scale.on('resize', (gameSize) => {
-      s.W = gameSize.width;
-      s.H = gameSize.height;
-    });
+    // Set up dedicated game canvas for rendering (independent of Phaser's canvas)
+    // Using a separate canvas avoids any interference from Phaser's Canvas renderer
+    s.W = window.innerWidth;
+    s.H = window.innerHeight;
+    this._gameCanvas = document.getElementById('game-canvas');
+    if (!this._gameCanvas) {
+      // Expected element is missing from index.html — log a warning
+      console.warn('Black Gold Blitz: #game-canvas element not found; falling back to dynamic canvas creation.');
+      this._gameCanvas = document.createElement('canvas');
+      this._gameCanvas.id = 'game-canvas';
+      this._gameCanvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;';
+      document.body.appendChild(this._gameCanvas);
+    }
+    this._gameCanvas.width = s.W;
+    this._gameCanvas.height = s.H;
+    this.ctx = this._gameCanvas.getContext('2d');
+    this._resizeHandler = () => {
+      s.W = window.innerWidth;
+      s.H = window.innerHeight;
+      this._gameCanvas.width = s.W;
+      this._gameCanvas.height = s.H;
+    };
+    window.addEventListener('resize', this._resizeHandler);
     this._postRenderHandler = () => this.render(getSettings());
     this.game.events.on('postrender', this._postRenderHandler);
 
@@ -109,6 +124,9 @@ export default class GameScene extends Phaser.Scene {
   shutdown() {
     if (this._postRenderHandler) {
       this.game.events.off('postrender', this._postRenderHandler);
+    }
+    if (this._resizeHandler) {
+      window.removeEventListener('resize', this._resizeHandler);
     }
     if (this.isTouchDevice) {
       document.removeEventListener('touchstart', this._touchStartHandler);
