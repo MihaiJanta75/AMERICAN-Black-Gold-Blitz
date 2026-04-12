@@ -65,8 +65,12 @@ export default class GameScene extends Phaser.Scene {
       s.input.mouseY = pointer.y;
     });
     this.input.on('pointerdown', (pointer) => {
-      if (pointer.rightButtonDown()) s.input.rightMouseDown = true;
-      else s.input.mouseDown = true;
+      // On touch devices, touch events are handled separately; skip mouse state to avoid
+      // Phaser's touch-to-pointer conversion causing unintended shooting on left-stick touch.
+      if (!this.isTouchDevice) {
+        if (pointer.rightButtonDown()) s.input.rightMouseDown = true;
+        else s.input.mouseDown = true;
+      }
 
       // Click/tap handlers for game states
       if (s.gameState === 'title' || s.gameState === 'gameover') {
@@ -80,8 +84,10 @@ export default class GameScene extends Phaser.Scene {
       }
     });
     this.input.on('pointerup', (pointer) => {
-      if (pointer.rightButtonReleased()) s.input.rightMouseDown = false;
-      else s.input.mouseDown = false;
+      if (!this.isTouchDevice) {
+        if (pointer.rightButtonReleased()) s.input.rightMouseDown = false;
+        else s.input.mouseDown = false;
+      }
     });
 
     this._loadingRemoved = false;
@@ -93,6 +99,8 @@ export default class GameScene extends Phaser.Scene {
     this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // Touch controls — attach to document so gestures starting outside canvas still register
+    this._moveTouchId = null;
+    this._aimTouchId = null;
     if (this.isTouchDevice) {
       this._touchStartHandler = (e) => this.handleTouch(e);
       this._touchMoveHandler = (e) => this.handleTouch(e);
@@ -144,8 +152,11 @@ export default class GameScene extends Phaser.Scene {
       if (e.type === 'touchstart') {
         initAudio();
         this.startGame();
+        // Fall through so this same touch is also registered as a joystick touch.
+        // Without this, the tap that starts the game is lost and the first drag does nothing.
+      } else {
+        return;
       }
-      return;
     }
 
     if (s.gameState === 'upgrade') { this.handleUpgradeTouchEvent(e); return; }

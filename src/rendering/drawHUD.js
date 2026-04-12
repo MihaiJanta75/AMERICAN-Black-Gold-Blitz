@@ -393,25 +393,63 @@ export function drawTouchControls(ctx, s, settings, isTouchDevice) {
   const { W, H, player, time } = s;
   const inp = s.input;
 
-  ctx.fillStyle = 'rgba(255,255,255,0.02)'; ctx.fillRect(0, 0, W * 0.4, H);
-  ctx.fillStyle = 'rgba(255,255,255,0.01)'; ctx.fillRect(W * 0.4, 0, W * 0.6, H);
+  // Zone background overlays (left = move, right = aim/fire)
+  ctx.fillStyle = 'rgba(255,255,255,0.04)'; ctx.fillRect(0, 0, W * 0.4, H);
+  ctx.fillStyle = 'rgba(255,255,255,0.02)'; ctx.fillRect(W * 0.4, 0, W * 0.6, H);
 
+  // --- Ghost / hint joystick circles (always visible so player knows where to touch) ---
+  const ghostL = { x: W * 0.22, y: H * 0.72 };
+  const ghostR = { x: W * 0.72, y: H * 0.72 };
+
+  if (!inp.joystickCenter) {
+    // Left ghost
+    ctx.strokeStyle = 'rgba(100,180,255,0.35)'; ctx.lineWidth = 2;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath(); ctx.arc(ghostL.x, ghostL.y, JOYSTICK_RADIUS, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(100,180,255,0.18)';
+    ctx.beginPath(); ctx.arc(ghostL.x, ghostL.y, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(100,180,255,0.55)';
+    ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('MOVE', ghostL.x, ghostL.y + 4);
+  }
+
+  if (!inp.aimJoystickCenter) {
+    // Right ghost
+    ctx.strokeStyle = 'rgba(255,160,60,0.35)'; ctx.lineWidth = 2;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath(); ctx.arc(ghostR.x, ghostR.y, JOYSTICK_RADIUS, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,160,60,0.18)';
+    ctx.beginPath(); ctx.arc(ghostR.x, ghostR.y, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,160,60,0.55)';
+    ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('AIM', ghostR.x, ghostR.y + 4);
+  }
+
+  // --- Active left (move) joystick ---
   if (inp.joystickCenter) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(100,180,255,0.55)'; ctx.lineWidth = 2.5;
+    ctx.setLineDash([]);
     ctx.beginPath(); ctx.arc(inp.joystickCenter.x, inp.joystickCenter.y, JOYSTICK_RADIUS, 0, Math.PI * 2); ctx.stroke();
     const kx = inp.joystickCenter.x + inp.touchMove.x * JOYSTICK_RADIUS;
     const ky = inp.joystickCenter.y + inp.touchMove.y * JOYSTICK_RADIUS;
-    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.beginPath(); ctx.arc(kx, ky, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(100,180,255,0.65)'; ctx.beginPath(); ctx.arc(kx, ky, 22, 0, Math.PI * 2); ctx.fill();
   }
 
+  // --- Active right (aim/fire) joystick ---
   if (inp.aimJoystickCenter) {
-    ctx.strokeStyle = inp.touchFire ? 'rgba(255,200,0,0.4)' : 'rgba(255,100,0,0.15)'; ctx.lineWidth = 2;
+    ctx.strokeStyle = inp.touchFire ? 'rgba(255,200,0,0.7)' : 'rgba(255,120,40,0.55)'; ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.arc(inp.aimJoystickCenter.x, inp.aimJoystickCenter.y, JOYSTICK_RADIUS, 0, Math.PI * 2); ctx.stroke();
     if (inp.touchAim.active) {
       const ax = inp.aimJoystickCenter.x + inp.touchAim.x * JOYSTICK_RADIUS;
       const ay = inp.aimJoystickCenter.y + inp.touchAim.y * JOYSTICK_RADIUS;
-      ctx.fillStyle = inp.touchFire ? 'rgba(255,200,0,0.4)' : 'rgba(255,100,0,0.25)';
+      ctx.fillStyle = inp.touchFire ? 'rgba(255,200,0,0.7)' : 'rgba(255,120,40,0.55)';
       ctx.beginPath(); ctx.arc(ax, ay, 18, 0, Math.PI * 2); ctx.fill();
+    } else {
+      // Show knob at center when aim stick touched but not yet moved
+      ctx.fillStyle = 'rgba(255,120,40,0.4)';
+      ctx.beginPath(); ctx.arc(inp.aimJoystickCenter.x, inp.aimJoystickCenter.y, 18, 0, Math.PI * 2); ctx.fill();
     }
   }
 
