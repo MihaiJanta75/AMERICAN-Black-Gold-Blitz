@@ -249,9 +249,8 @@ export function updatePlayer(s, dt, soundFn) {
   // Firing
   p.fireCooldown -= dt;
   p.homingCooldown -= dt;
-  // autoFire only applies on touch devices — PC always uses intentional mouse/key input
-  const autoFire = s.isTouchDevice && (s.settingsAutoFire || false);
-  const wantFire   = inp.keys['Space'] || inp.mouseDown    || inp.touchFire    || autoFire;
+  // Fire when: space key, mouse down, or right joystick on mobile
+  const wantFire   = inp.keys['Space'] || inp.mouseDown || inp.touchFire;
   const wantMissile = inp.keys['KeyE']  || inp.rightMouseDown || inp.touchMissile;
 
   const isMissileWeapon = s.upgradeStats.activeWeapon === 'missile';

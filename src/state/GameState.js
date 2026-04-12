@@ -158,6 +158,10 @@ export const state = {
     touchMissile: false,
     joystickCenter: null,
     aimJoystickCenter: null,
+    // Double-click tracking for ability buttons
+    lastDashClickTime: 0,
+    lastTimeWarpClickTime: 0,
+    lastBlackHoleClickTime: 0,
   },
 
   /* Viewport */

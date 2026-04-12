@@ -410,11 +410,11 @@ export function drawTouchControls(ctx, s, settings, isTouchDevice) {
     }
   }
 
-  // Mobile buttons — larger for easier touch targeting
-  const btnSize = 60;
-  const btnY = H - btnSize - 20;
-  const btnGap = btnSize + 14;
-  let btnLeft = 14;
+  // Mobile buttons — positioned on right side, vertically stacked
+  const btnSize = 50;
+  const btnGap = 12;
+  const btnStartX = W - btnSize - 14;
+  const btnStartY = H - btnSize * 3 - btnGap * 2 - 20;
 
   function drawCircleBtn(cx, cy, r, fillColor, strokeColor, label, labelColor, fontSize) {
     ctx.fillStyle = fillColor;
@@ -425,46 +425,64 @@ export function drawTouchControls(ctx, s, settings, isTouchDevice) {
     ctx.fillText(label, cx, cy + (fontSize ? Math.floor(fontSize * 0.35) : 4));
   }
 
+  let btnRow = 0;
+  const now = Date.now();
+  const DOUBLE_CLICK_WINDOW = 300;
+
   // DASH button
   const dashReady = player.dashCooldown <= 0;
-  const dashCx = btnLeft + btnSize / 2;
-  drawCircleBtn(dashCx, btnY + btnSize / 2, btnSize / 2,
-    dashReady ? 'rgba(68,204,255,0.32)' : 'rgba(68,204,255,0.10)',
-    dashReady ? 'rgba(68,204,255,0.7)' : 'rgba(68,204,255,0.22)',
+  const dashCx = btnStartX + btnSize / 2;
+  const dashCy = btnStartY + btnRow * (btnSize + btnGap) + btnSize / 2;
+  const dashWaiting = now - s.input.lastDashClickTime < DOUBLE_CLICK_WINDOW && s.input.lastDashClickTime > 0;
+  const dashFill = dashWaiting ? 'rgba(68,204,255,0.55)' : (dashReady ? 'rgba(68,204,255,0.32)' : 'rgba(68,204,255,0.10)');
+  const dashStroke = dashWaiting ? 'rgba(68,204,255,1.0)' : (dashReady ? 'rgba(68,204,255,0.7)' : 'rgba(68,204,255,0.22)');
+  drawCircleBtn(dashCx, dashCy, btnSize / 2,
+    dashFill, dashStroke,
     dashReady ? 'DASH' : Math.ceil(player.dashCooldown) + 's',
-    dashReady ? '#44ccff' : '#335566', 13);
-  btnLeft += btnGap;
-
-  // AUTO-FIRE button
-  const afCx = btnLeft + btnSize / 2;
-  drawCircleBtn(afCx, btnY + btnSize / 2, btnSize / 2,
-    settings.autoFire ? 'rgba(68,255,136,0.32)' : 'rgba(100,100,100,0.18)',
-    settings.autoFire ? 'rgba(68,255,136,0.7)' : 'rgba(100,100,100,0.3)',
-    'AUTO', settings.autoFire ? '#44ff88' : '#666', 12);
-  btnLeft += btnGap;
+    dashWaiting ? '#88ffff' : (dashReady ? '#44ccff' : '#335566'), 11);
+  // Show "double-tap!" hint when waiting for second tap
+  if (dashWaiting) {
+    ctx.font = '8px monospace'; ctx.fillStyle = 'rgba(68,204,255,0.7)'; ctx.textAlign = 'center';
+    ctx.fillText('2×', dashCx, dashCy + btnSize / 2 + 14);
+  }
+  btnRow++;
 
   // TIME WARP button (only when owned)
   if (s.upgradeStats.hasTimeWarp) {
     const twReady = (s.timeWarpCooldown || 0) <= 0;
-    const twCx = btnLeft + btnSize / 2;
-    drawCircleBtn(twCx, btnY + btnSize / 2, btnSize / 2,
-      twReady ? 'rgba(170,136,255,0.32)' : 'rgba(80,60,120,0.18)',
-      twReady ? 'rgba(170,136,255,0.7)' : 'rgba(80,60,120,0.3)',
+    const twCx = btnStartX + btnSize / 2;
+    const twCy = btnStartY + btnRow * (btnSize + btnGap) + btnSize / 2;
+    const twWaiting = now - s.input.lastTimeWarpClickTime < DOUBLE_CLICK_WINDOW && s.input.lastTimeWarpClickTime > 0;
+    const twFill = twWaiting ? 'rgba(170,136,255,0.55)' : (twReady ? 'rgba(170,136,255,0.32)' : 'rgba(80,60,120,0.18)');
+    const twStroke = twWaiting ? 'rgba(170,136,255,1.0)' : (twReady ? 'rgba(170,136,255,0.7)' : 'rgba(80,60,120,0.3)');
+    drawCircleBtn(twCx, twCy, btnSize / 2,
+      twFill, twStroke,
       twReady ? '⏱' : Math.ceil(s.timeWarpCooldown) + 's',
-      twReady ? '#aa88ff' : '#554466', twReady ? 22 : 13);
-    btnLeft += btnGap;
+      twWaiting ? '#ddbbff' : (twReady ? '#aa88ff' : '#554466'), twReady ? 20 : 11);
+    if (twWaiting) {
+      ctx.font = '8px monospace'; ctx.fillStyle = 'rgba(170,136,255,0.7)'; ctx.textAlign = 'center';
+      ctx.fillText('2×', twCx, twCy + btnSize / 2 + 14);
+    }
+    btnRow++;
   }
 
   // BLACK HOLE button (only when owned)
   if (s.upgradeStats.hasBlackHole) {
     const bhReady = s.blackHoleCooldown <= 0 && player.oil >= BLACK_HOLE_COOLDOWN;
-    const bhCx = btnLeft + btnSize / 2;
-    drawCircleBtn(bhCx, btnY + btnSize / 2, btnSize / 2,
-      bhReady ? 'rgba(136,68,255,0.32)' : 'rgba(60,40,90,0.18)',
-      bhReady ? 'rgba(136,68,255,0.7)' : 'rgba(60,40,90,0.3)',
+    const bhCx = btnStartX + btnSize / 2;
+    const bhCy = btnStartY + btnRow * (btnSize + btnGap) + btnSize / 2;
+    const bhWaiting = now - s.input.lastBlackHoleClickTime < DOUBLE_CLICK_WINDOW && s.input.lastBlackHoleClickTime > 0;
+    const bhFill = bhWaiting ? 'rgba(136,68,255,0.55)' : (bhReady ? 'rgba(136,68,255,0.32)' : 'rgba(60,40,90,0.18)');
+    const bhStroke = bhWaiting ? 'rgba(136,68,255,1.0)' : (bhReady ? 'rgba(136,68,255,0.7)' : 'rgba(60,40,90,0.3)');
+    drawCircleBtn(bhCx, bhCy, btnSize / 2,
+      bhFill, bhStroke,
       bhReady ? '🕳' : Math.ceil(s.blackHoleCooldown) + 's',
-      bhReady ? '#8844ff' : '#554466', bhReady ? 22 : 13);
-    btnLeft += btnGap;
+      bhWaiting ? '#dd88ff' : (bhReady ? '#8844ff' : '#554466'), bhReady ? 20 : 11);
+    if (bhWaiting) {
+      ctx.font = '8px monospace'; ctx.fillStyle = 'rgba(136,68,255,0.7)'; ctx.textAlign = 'center';
+      ctx.fillText('2×', bhCx, bhCy + btnSize / 2 + 14);
+    }
+    btnRow++;
   }
 
   // Pause button (top-right)

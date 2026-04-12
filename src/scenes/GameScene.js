@@ -151,38 +151,100 @@ export default class GameScene extends Phaser.Scene {
     if (s.gameState !== 'playing') return;
 
     const { W, H } = s;
-    const MOBILE_BTN_SIZE = 36;
-    const MOBILE_BTN_Y = H - MOBILE_BTN_SIZE - 50;
-    const DASH_BTN_X = 20;
-    const AF_BTN_X = 70;
     const PAUSE_BTN_X = W - 50;
     const PAUSE_BTN_Y = 10;
     const PAUSE_BTN_SIZE = 30;
 
+    // Button positions for click detection
+    const btnSize = 50;
+    const btnGap = 12;
+    const btnStartX = W - btnSize - 14;
+    const btnStartY = H - btnSize * 3 - btnGap * 2 - 20;
+    const btnRadius = btnSize / 2;
+
+    // Check pause button
     for (const t of e.changedTouches) {
       if (t.clientX > PAUSE_BTN_X && t.clientY < PAUSE_BTN_Y + PAUSE_BTN_SIZE && e.type === 'touchstart') {
-        this.togglePause(); return;
+        this.togglePause();
+        return;
       }
-      if (t.clientX >= DASH_BTN_X && t.clientX <= DASH_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE && e.type === 'touchstart') {
-        if (s.player.dashCooldown <= 0 && s.input.touchMove.active) {
-          const dashA = Math.atan2(s.input.touchMove.y, s.input.touchMove.x);
-          s.player.dashing = DASH_DURATION;
-          s.player.dashAngle = dashA;
-          s.player.dashCooldown = Math.max(0.5, DASH_COOLDOWN - (s.upgradeStats.dashCooldownBonus || 0));
-          this.soundFn('dash');
-          addScreenFlash(s, '#44ccff', 0.1);
+
+      // Check action buttons on touchstart
+      if (e.type === 'touchstart') {
+        const btnCx = btnStartX + btnSize / 2;
+        let btnRow = 0;
+        const now = Date.now();
+        const DOUBLE_CLICK_WINDOW = 300; // milliseconds
+
+        // DASH button
+        let btnCy = btnStartY + btnRow * (btnSize + btnGap) + btnSize / 2;
+        if (Math.hypot(t.clientX - btnCx, t.clientY - btnCy) <= btnRadius) {
+          // Double-click detection
+          if (now - s.input.lastDashClickTime < DOUBLE_CLICK_WINDOW) {
+            // Double-click confirmed, activate dash
+            if (s.player.dashCooldown <= 0 && s.input.touchMove.active) {
+              const dashA = Math.atan2(s.input.touchMove.y, s.input.touchMove.x);
+              s.player.dashing = DASH_DURATION;
+              s.player.dashAngle = dashA;
+              s.player.dashCooldown = Math.max(0.5, DASH_COOLDOWN - (s.upgradeStats.dashCooldownBonus || 0));
+              this.soundFn('dash');
+              addScreenFlash(s, '#44ccff', 0.1);
+            }
+            s.input.lastDashClickTime = 0; // Reset for next double-click
+          } else {
+            // First click, record time
+            s.input.lastDashClickTime = now;
+          }
+          return;
         }
-        return;
-      }
-      if (t.clientX >= AF_BTN_X && t.clientX <= AF_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE && e.type === 'touchstart') {
-        toggleSetting('autoFire');
-        return;
+        btnRow++;
+
+        // TIME WARP button
+        if (s.upgradeStats.hasTimeWarp) {
+          btnCy = btnStartY + btnRow * (btnSize + btnGap) + btnSize / 2;
+          if (Math.hypot(t.clientX - btnCx, t.clientY - btnCy) <= btnRadius) {
+            // Double-click detection
+            if (now - s.input.lastTimeWarpClickTime < DOUBLE_CLICK_WINDOW) {
+              // Double-click confirmed, activate time warp
+              s.input.keys['KeyQ'] = true;
+              s.input.lastTimeWarpClickTime = 0; // Reset for next double-click
+            } else {
+              // First click, record time
+              s.input.lastTimeWarpClickTime = now;
+            }
+            return;
+          }
+          btnRow++;
+        }
+
+        // BLACK HOLE button
+        if (s.upgradeStats.hasBlackHole) {
+          btnCy = btnStartY + btnRow * (btnSize + btnGap) + btnSize / 2;
+          if (Math.hypot(t.clientX - btnCx, t.clientY - btnCy) <= btnRadius) {
+            // Double-click detection
+            if (now - s.input.lastBlackHoleClickTime < DOUBLE_CLICK_WINDOW) {
+              // Double-click confirmed, activate black hole
+              s.input.keys['KeyB'] = true;
+              s.input.lastBlackHoleClickTime = 0; // Reset for next double-click
+            } else {
+              // First click, record time
+              s.input.lastBlackHoleClickTime = now;
+            }
+            return;
+          }
+        }
       }
     }
 
+    // Process joysticks and button clicks
+    // Reset touch fire/missile at start of frame
     s.input.touchFire = false;
     s.input.touchMissile = false;
+
+    // Start with all touch inputs inactive for this frame
+    let hasRightJoystick = false;
     for (const t of e.touches) {
+      // Left side: movement joystick ONLY — NO FIRING
       if (t.clientX < W * 0.4) {
         if (!s.input.joystickCenter) s.input.joystickCenter = { x: t.clientX, y: t.clientY };
         const dx = t.clientX - s.input.joystickCenter.x;
@@ -193,7 +255,9 @@ export default class GameScene extends Phaser.Scene {
           s.input.touchMove.y = dy / Math.max(d, JOYSTICK_RADIUS);
           s.input.touchMove.active = true;
         }
+        // NEVER set fire based on left joystick
       } else {
+        // Right side: aiming and firing joystick ONLY
         if (!s.input.aimJoystickCenter) s.input.aimJoystickCenter = { x: t.clientX, y: t.clientY };
         const dx = t.clientX - s.input.aimJoystickCenter.x;
         const dy = t.clientY - s.input.aimJoystickCenter.y;
@@ -202,13 +266,16 @@ export default class GameScene extends Phaser.Scene {
           s.input.touchAim.x = dx / Math.max(d, JOYSTICK_RADIUS);
           s.input.touchAim.y = dy / Math.max(d, JOYSTICK_RADIUS);
           s.input.touchAim.active = true;
-          s.input.touchFire = true;
+          hasRightJoystick = true;
           if (d > JOYSTICK_RADIUS * 1.3) s.input.touchMissile = true;
         } else {
           s.input.touchAim.active = false;
-          s.input.touchFire = false;
         }
       }
+    }
+    // Only fire if right joystick was actually moved (never from left stick)
+    if (hasRightJoystick) {
+      s.input.touchFire = true;
     }
   }
 
