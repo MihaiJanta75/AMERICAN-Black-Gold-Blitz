@@ -297,10 +297,11 @@ export default class GameScene extends Phaser.Scene {
     if (s.upgradeChoices.length === 0) return;
     const { W, H } = s;
 
-    // Skip button
+    // Skip button — always works on first tap (no confirm needed)
     const skipW = 180, skipH = 44;
     const skipX = (W - skipW) / 2, skipY = H * 0.91;
     if (mx >= skipX && mx <= skipX + skipW && my >= skipY && my <= skipY + skipH) {
+      s.pendingUpgradeCard = null;
       s.upgradeChoices = [];
       s.gameState = 'playing';
       return;
@@ -321,13 +322,27 @@ export default class GameScene extends Phaser.Scene {
     const startX = (W - totalW) / 2;
     const startY = H * 0.135;
 
+    // Helper: handle a card tap with two-tap confirm
+    const handleCardTap = (key) => {
+      if (s.pendingUpgradeCard === key) {
+        // Second tap on same card — confirm
+        applyUpgrade(s, key);
+        s.pendingUpgradeCard = null;
+        s.upgradeChoices = [];
+        s.gameState = 'playing';
+        return true;
+      } else {
+        // First tap — mark as pending
+        s.pendingUpgradeCard = key;
+        return false;
+      }
+    };
+
     // Stat cards
     for (let i = 0; i < statChoices.length; i++) {
       const cx = startX + i * (cardW + gap);
       if (mx >= cx && mx <= cx + cardW && my >= startY && my <= startY + cardH) {
-        applyUpgrade(s, statChoices[i]);
-        s.upgradeChoices = [];
-        s.gameState = 'playing';
+        if (handleCardTap(statChoices[i])) return;
         return;
       }
     }
@@ -337,9 +352,7 @@ export default class GameScene extends Phaser.Scene {
       const wIdx = statChoices.length;
       const wx = startX + wIdx * (cardW + gap);
       if (mx >= wx && mx <= wx + cardW && my >= startY && my <= startY + cardH) {
-        applyUpgrade(s, weaponKey);
-        s.upgradeChoices = [];
-        s.gameState = 'playing';
+        if (handleCardTap(weaponKey)) return;
         return;
       }
     }
@@ -352,9 +365,7 @@ export default class GameScene extends Phaser.Scene {
       const synW = Math.min(340, W * 0.50);
       const synX = (W - synW) / 2;
       if (mx >= synX && mx <= synX + synW && my >= nextY && my <= nextY + synH) {
-        applyUpgrade(s, synergyKey);
-        s.upgradeChoices = [];
-        s.gameState = 'playing';
+        if (handleCardTap(synergyKey)) return;
         return;
       }
       nextY += synH + 10;
@@ -365,12 +376,13 @@ export default class GameScene extends Phaser.Scene {
       const mutW = Math.min(340, W * 0.50);
       const mutX = (W - mutW) / 2;
       if (mx >= mutX && mx <= mutX + mutW && my >= nextY && my <= nextY + synH) {
-        applyUpgrade(s, mutationKey);
-        s.upgradeChoices = [];
-        s.gameState = 'playing';
+        if (handleCardTap(mutationKey)) return;
         return;
       }
     }
+
+    // Tapped outside any card — clear pending
+    s.pendingUpgradeCard = null;
   }
 
   handleMilestoneClick(mx, my) {
@@ -506,13 +518,14 @@ export default class GameScene extends Phaser.Scene {
     if (s.pendingLevelUp && s.gameState === 'playing') {
       s.pendingLevelUp = false;
       s.upgradeChoices = getUpgradeChoices(s);
-      if (s.upgradeChoices.length > 0) { s.isBountyUpgrade = false; s.gameState = 'upgrade'; }
+      if (s.upgradeChoices.length > 0) { s.isBountyUpgrade = false; s.pendingUpgradeCard = null; s.gameState = 'upgrade'; }
     }
 
     // Bounty card (from commander kills / supply drops)
     if (s.bountyCards.length > 0 && s.gameState === 'playing') {
       s.upgradeChoices = [s.bountyCards.shift()];
       s.isBountyUpgrade = true;
+      s.pendingUpgradeCard = null;
       s.gameState = 'upgrade';
     }
 

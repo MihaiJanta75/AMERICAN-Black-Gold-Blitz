@@ -64,6 +64,7 @@ export const state = {
   upgradeStats: {},
   upgradeLevels: {},
   upgradeChoices: [],
+  pendingUpgradeCard: null,   // key of card awaiting second-tap confirmation
   totalUpgrades: 0,
   bountyCards: [],       // upgrade keys waiting to be awarded
   isBountyUpgrade: false,
@@ -219,6 +220,12 @@ export function getBulletDamage(s) {
   if (s.player.revengeBuff > 0) dmg *= 1.50;
   // Warcry wildcard: stacking bonus per kill
   if (s.upgradeStats.hasWarcry) dmg *= (s.upgradeStats.warcryDamageMult || 1);
+  // Soul Harvest: accumulates bonus damage from kills
+  if ((s.upgradeStats.soulHarvestStacks || 0) > 0) dmg *= (1 + s.upgradeStats.soulHarvestStacks);
+  // Soul Tithe synergy: soul stacks amplify Blood Tithe bonus
+  if (s.upgradeStats.hasSoulTithe && (s.upgradeStats.soulHarvestStacks || 0) > 0) {
+    dmg *= (1 + s.upgradeStats.soulHarvestStacks * (s.upgradeStats.soulTithePctPerStack || 0.05));
+  }
   // Railgun mutation: bullets deal 2× damage
   if (s.upgradeStats.mutations?.railgun) dmg *= 2.0;
   // Blood Tithe chaos card bonus
@@ -417,6 +424,21 @@ export function resetUpgrades(s) {
     hasOilVortex: false,
     hasShockNova: false,
     hasWarMachine: false,
+    // New cards
+    frostRoundsDuration: 1.5,
+    armorShredPerHit: 0.08, armorShredMax: 0.40,
+    toxicRoundsDps: 3, toxicRoundsDuration: 2.0,
+    echoStrikePeriod: 3, echoStrikeCount: 0,
+    soulHarvestStacks: 0, soulHarvestCap: 0.50,
+    // New synergy flags
+    hasCryoNova: false, cryoNovaFreeze: 2.0,
+    hasShatterStrike: false, shatterStrikeMult: 1.80,
+    hasPoisonField: false, poisonFieldDps: 6,
+    hasEchoChain: false, echoChainCount: 1,
+    hasSoulEngine: false, soulEnginePctPerStack: 0.03,
+    hasToxicShred: false, toxicShredArmor: 0.15,
+    hasFrostEcho: false, frostEchoDuration: 2.0,
+    hasSoulTithe: false, soulTithePctPerStack: 0.05,
     // Wildcard flags
     wildBerserker: false,
     wildGlassCannon: false,
@@ -587,6 +609,21 @@ const UPGRADE_APPLY = {
   oil_vortex:        (l, us) => { us.hasOilVortex = true; us.oilVortexRadius = BLACK_HOLE_RADIUS * 1.5 + (l - 1) * 50; },
   shock_nova:        (l, us) => { us.hasShockNova = true; us.shockNovaRadius = 150 + (l - 1) * 50; },
   war_machine:       (_l, us) => { us.hasWarMachine = true; },
+  // ── NEW BASE CARDS ─────────────────────────────────────────────────────────
+  frost_rounds:      (l, us) => { us.frostRoundsDuration = 1.5 + (l - 1) * 0.5; },
+  armor_shred:       (l, us) => { us.armorShredPerHit = 0.08 + (l - 1) * 0.02; us.armorShredMax = Math.min(0.80, 0.40 + (l - 1) * 0.08); },
+  toxic_rounds:      (l, us) => { us.toxicRoundsDuration = 2.0 + (l - 1) * 1.0; },
+  echo_strike:       (l, us) => { us.echoStrikePeriod = Math.max(2, 3 - (l - 1)); us.echoStrikeCount = 0; },
+  soul_harvest:      (l, us) => { us.soulHarvestCap = 0.50 + (l - 1) * 0.10; },
+  // ── NEW SYNERGIES ──────────────────────────────────────────────────────────
+  cryo_nova:      (l, us) => { us.hasCryoNova = true; us.cryoNovaFreeze = 2.0 + (l - 1) * 0.5; },
+  shatter_strike: (l, us) => { us.hasShatterStrike = true; us.shatterStrikeMult = 1.80 + (l - 1) * 0.30; },
+  poison_field:   (l, us) => { us.hasPoisonField = true; us.poisonFieldDps = 6 * (1 + (l - 1) * 0.5); },
+  echo_chain:     (l, us) => { us.hasEchoChain = true; us.echoChainCount = l; },
+  soul_engine:    (l, us) => { us.hasSoulEngine = true; us.soulEnginePctPerStack = 0.03 + (l - 1) * 0.01; },
+  toxic_shred:    (l, us) => { us.hasToxicShred = true; us.toxicShredArmor = 0.15 + (l - 1) * 0.05; },
+  frost_echo:     (l, us) => { us.hasFrostEcho = true; us.frostEchoDuration = 2.0 + (l - 1) * 1.0; },
+  soul_tithe:     (l, us) => { us.hasSoulTithe = true; us.soulTithePctPerStack = 0.05 + (l - 1) * 0.02; },
   // ── WEAPON CARDS (new) ──────────────────────────────────────────────────────
   weapon_chain_gun:   (l, us) => { us.activeWeapon = 'chain_gun';   if(!us.weaponLevels) us.weaponLevels={}; us.weaponLevels.chain_gun   = l; },
   weapon_plasma:      (l, us) => { us.activeWeapon = 'plasma';      if(!us.weaponLevels) us.weaponLevels={}; us.weaponLevels.plasma      = l; },
@@ -795,6 +832,16 @@ export function registerKill(s, scoreVal, enemyInfo) {
     }
   }
 
+  // Soul Harvest: accumulate damage bonus from kills
+  if (s.upgradeLevels['soul_harvest'] > 0) {
+    const cap = s.upgradeStats.soulHarvestCap || 0.50;
+    const prev = s.upgradeStats.soulHarvestStacks || 0;
+    s.upgradeStats.soulHarvestStacks = Math.min(cap, prev + 0.01);
+    if (Math.floor(prev * 100) % 10 === 9) {
+      spawnFloatingText(s, s.player.x, s.player.y - 38, '💀 SOUL: +' + Math.floor(s.upgradeStats.soulHarvestStacks * 100) + '% dmg', '#aa44ff', 11);
+    }
+  }
+
   // Kill feed
   if (enemyInfo) {
     const typeStr = enemyInfo.isBoss ? 'BOSS' : (enemyInfo.subType && enemyInfo.subType !== 'normal' ? enemyInfo.subType.toUpperCase() : enemyInfo.type.toUpperCase());
@@ -944,6 +991,8 @@ export function resetGameState(s) {
   s.killFeed = [];
   s.bountyCards = [];
   s.isBountyUpgrade = false;
+  s.upgradeChoices = [];
+  s.pendingUpgradeCard = null;
   s.blackHoleCooldown = 0;
   s.timeWarpCooldown = 0;
   s.lastAbilityTime = -99;

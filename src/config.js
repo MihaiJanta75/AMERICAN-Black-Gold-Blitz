@@ -161,6 +161,13 @@ export const UPGRADES = {
   companion_repair: { name: "Repair Drone",  desc: "+1 repair drone (0.5 oil/s). Restores +1.5 oil/s passively", icon: "🤖", color: "#44ff88", category: 'companion', maxLevel: 99, rarity: 'rare' },
   companion_bomber: { name: "Bomber Drone",  desc: "+1 bomber drone (1.0 oil/s). Drops 40-dmg AoE bombs", icon: "🤖", color: "#ffaa00", category: 'companion', maxLevel: 99, rarity: 'legendary' },
 
+  // ── NEW BASE CARDS (synergy fodder) ──────────────────────────────────
+  frost_rounds:    { name: "Frost Rounds",   desc: "Bullets slow enemies 30% for 1.5s. Stack: +0.5s freeze duration",   icon: "❄", color: "#88ddff", category: 'firepower', maxLevel: 5, rarity: 'rare' },
+  armor_shred:     { name: "Armor Shred",    desc: "Bullets reduce enemy armor 8% per hit (max 40%). Stack: +2% shred",  icon: "🪓", color: "#cc8844", category: 'firepower', maxLevel: 5, rarity: 'rare' },
+  toxic_rounds:    { name: "Toxic Rounds",   desc: "Bullets apply 3 dmg/s poison for 2s. Stack: +1s poison duration",   icon: "☠", color: "#88ff44", category: 'firepower', maxLevel: 5, rarity: 'rare' },
+  echo_strike:     { name: "Echo Strike",    desc: "Every 3rd bullet fires twice. Stack: -1 trigger count (min 2)",      icon: "〰", color: "#ff88ff", category: 'firepower', maxLevel: 3, rarity: 'legendary' },
+  soul_harvest:    { name: "Soul Harvest",   desc: "Kills grant +1% dmg (max 50%). Stack: +10% cap per stack",           icon: "💀", color: "#aa44ff", category: 'special',   maxLevel: 3, rarity: 'rare' },
+
   // ── CHAOS CARDS (drawbacks + powerful upsides) ────────────────────────────
   card_blood_tithe: { name: "Blood Tithe",    desc: "+15% dmg per stack. Drawback: -0.4 oil/s drain each stack", icon: "🩸", color: "#cc0044", category: 'chaos', maxLevel: 99, rarity: 'rare' },
   card_glass_blade: { name: "Glass Blade",    desc: "+20% dmg per stack. Drawback: body contact deals 3× dmg to you", icon: "💎", color: "#00ffcc", category: 'chaos', maxLevel: 99, rarity: 'legendary' },
@@ -190,6 +197,16 @@ export const UPGRADES = {
   missile_battery:  { name: "MISSILE BATTERY",  desc: "Orbital turrets fire homing missiles. Stack: +20% dmg",        icon: "🛸", color: "#ff8844", category: 'special', maxLevel: 3, synergy: true, requires: ['missile_boost', 'orbital'] },
   inferno_barrage:  { name: "INFERNO BARRAGE",  desc: "Napalm chains to targets. Stack: +20px chain radius",          icon: "🌋", color: "#ff4400", category: 'special', maxLevel: 3, synergy: true, requires: ['spread_shot', 'napalm'] },
   adaptive_plating: { name: "ADAPTIVE PLATING", desc: "Blocked damage restores oil. Stack: +10% more restored",       icon: "💎", color: "#44ffcc", category: 'special', maxLevel: 3, synergy: true, requires: ['armor_plating', 'repair'] },
+
+  // ── NEW SYNERGIES (Phase 2 — insane combos) ──────────────────────────────
+  cryo_nova:      { name: "CRYO NOVA",       desc: "Oil Nova freezes enemies for 2s. Stack: +0.5s freeze duration",      icon: "🌨", color: "#88ddff", category: 'special', maxLevel: 3, synergy: true, requires: ['frost_rounds', 'oil_nova'] },
+  shatter_strike: { name: "SHATTER STRIKE",  desc: "Frozen enemies take +80% bullet damage. Stack: +30% bonus",          icon: "💠", color: "#00ddff", category: 'special', maxLevel: 3, synergy: true, requires: ['frost_rounds', 'high_caliber'] },
+  poison_field:   { name: "POISON FIELD",    desc: "Napalm zones also poison (6 dmg/s). Stack: +50% poison damage",      icon: "☣", color: "#66ff44", category: 'special', maxLevel: 3, synergy: true, requires: ['toxic_rounds', 'napalm'] },
+  echo_chain:     { name: "ECHO CHAIN",      desc: "Echo shots arc chain lightning. Stack: +1 chain target per echo",    icon: "⚡", color: "#ffaaff", category: 'special', maxLevel: 3, synergy: true, requires: ['echo_strike', 'chain_lightning'] },
+  soul_engine:    { name: "SOUL ENGINE",     desc: "Soul stacks boost orbital turret dmg +3% each. Stack: +1% per stack", icon: "⊕", color: "#cc88ff", category: 'special', maxLevel: 3, synergy: true, requires: ['soul_harvest', 'orbital'] },
+  toxic_shred:    { name: "TOXIC SHRED",     desc: "Poisoned enemies have -15% extra armor. Stack: +5% armor penalty",   icon: "🧪", color: "#aaff44", category: 'special', maxLevel: 3, synergy: true, requires: ['toxic_rounds', 'armor_shred'] },
+  frost_echo:     { name: "FROST ECHO",      desc: "Echo shots leave frost zones slowing 2s. Stack: +1s slow duration",  icon: "❄", color: "#88ffee", category: 'special', maxLevel: 3, synergy: true, requires: ['echo_strike', 'frost_rounds'] },
+  soul_tithe:     { name: "SOUL TITHE",      desc: "Soul stacks fuel Blood Tithe (+5% extra dmg each). Stack: +2% each", icon: "🩸", color: "#ff4488", category: 'special', maxLevel: 3, synergy: true, requires: ['soul_harvest', 'card_blood_tithe'] },
 
   // ── EXPANDED SYNERGIES (Phase 1 update) ──────────────────────────────────
   chain_reaction:   { name: "CHAIN REACTION",   desc: "Explosions arc lightning. Stack: +1 chain target",       icon: "⚡", color: "#88ffff", category: 'special', maxLevel: 3, synergy: true, requires: ['explosive_rounds', 'chain_lightning'] },

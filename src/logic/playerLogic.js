@@ -303,7 +303,11 @@ export function updatePlayer(s, dt, soundFn) {
           const target = findNearestEnemy(s, { x: ox, y: oy });
           if (target && dist({ x: ox, y: oy }, target) < 320) {
             const ta = angle({ x: ox, y: oy }, target);
-            s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta) * 8, vy: Math.sin(ta) * 8, life: 1, damage: 10, crit: false, pierce: 0 });
+            // Soul Engine synergy: soul stacks boost orbital turret damage
+            const soulBoost = s.upgradeStats.hasSoulEngine
+              ? 1 + (s.upgradeStats.soulHarvestStacks || 0) / (s.upgradeStats.soulEnginePctPerStack || 0.03) * 0.01
+              : 1;
+            s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta) * 8, vy: Math.sin(ta) * 8, life: 1, damage: 10 * soulBoost, crit: false, pierce: 0 });
           }
         }
       }
