@@ -152,8 +152,11 @@ export default class GameScene extends Phaser.Scene {
       if (e.type === 'touchstart') {
         initAudio();
         this.startGame();
+        // Fall through so this same touch is also registered as a joystick touch.
+        // Without this, the tap that starts the game is lost and the first drag does nothing.
+      } else {
+        return;
       }
-      return;
     }
 
     if (s.gameState === 'upgrade') { this.handleUpgradeTouchEvent(e); return; }
