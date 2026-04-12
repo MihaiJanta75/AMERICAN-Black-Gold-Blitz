@@ -158,98 +158,51 @@ export default class GameScene extends Phaser.Scene {
     const PAUSE_BTN_Y = 10;
     const PAUSE_BTN_SIZE = 30;
 
-    // Button positions for click detection
-    const btnSize = 50;
-    const btnGap = 12;
-    const btnStartX = W - btnSize - 14;
-    const btnStartY = H - btnSize * 3 - btnGap * 2 - 20;
-    const btnRadius = btnSize / 2;
-
-    // Check pause button
-    for (const t of e.changedTouches) {
-      if (t.clientX > PAUSE_BTN_X && t.clientY < PAUSE_BTN_Y + PAUSE_BTN_SIZE && e.type === 'touchstart') {
-        this.togglePause();
-        return;
-      }
-
-      // Check action buttons on touchstart
-      if (e.type === 'touchstart') {
-        const btnCx = btnStartX + btnSize / 2;
-        let btnRow = 0;
-        const now = Date.now();
-        const DOUBLE_CLICK_WINDOW = 300; // milliseconds
-
-        // DASH button
-        let btnCy = btnStartY + btnRow * (btnSize + btnGap) + btnSize / 2;
-        if (Math.hypot(t.clientX - btnCx, t.clientY - btnCy) <= btnRadius) {
-          // Double-click detection
-          if (now - s.input.lastDashClickTime < DOUBLE_CLICK_WINDOW) {
-            // Double-click confirmed, activate dash
-            if (s.player.dashCooldown <= 0 && s.input.touchMove.active) {
-              const dashA = Math.atan2(s.input.touchMove.y, s.input.touchMove.x);
-              s.player.dashing = DASH_DURATION;
-              s.player.dashAngle = dashA;
-              s.player.dashCooldown = Math.max(0.5, DASH_COOLDOWN - (s.upgradeStats.dashCooldownBonus || 0));
-              this.soundFn('dash');
-              addScreenFlash(s, '#44ccff', 0.1);
-            }
-            s.input.lastDashClickTime = 0; // Reset for next double-click
-          } else {
-            // First click, record time
-            s.input.lastDashClickTime = now;
-          }
-          return;
+    // On touchstart, assign each new touch to a joystick role based on its starting position.
+    // We track roles by touch identifier so the left stick can never accidentally shoot.
+    if (e.type === 'touchstart') {
+      for (const t of e.changedTouches) {
+        if (t.clientX > PAUSE_BTN_X && t.clientY < PAUSE_BTN_Y + PAUSE_BTN_SIZE) {
+          this.togglePause(); return;
         }
-        btnRow++;
-
-        // TIME WARP button
-        if (s.upgradeStats.hasTimeWarp) {
-          btnCy = btnStartY + btnRow * (btnSize + btnGap) + btnSize / 2;
-          if (Math.hypot(t.clientX - btnCx, t.clientY - btnCy) <= btnRadius) {
-            // Double-click detection
-            if (now - s.input.lastTimeWarpClickTime < DOUBLE_CLICK_WINDOW) {
-              // Double-click confirmed, activate time warp
-              s.input.keys['KeyQ'] = true;
-              s.input.lastTimeWarpClickTime = 0; // Reset for next double-click
-            } else {
-              // First click, record time
-              s.input.lastTimeWarpClickTime = now;
-            }
-            return;
+        if (t.clientX >= DASH_BTN_X && t.clientX <= DASH_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE) {
+          if (s.player.dashCooldown <= 0 && s.input.touchMove.active) {
+            const dashA = Math.atan2(s.input.touchMove.y, s.input.touchMove.x);
+            s.player.dashing = DASH_DURATION;
+            s.player.dashAngle = dashA;
+            s.player.dashCooldown = Math.max(0.5, DASH_COOLDOWN - (s.upgradeStats.dashCooldownBonus || 0));
+            this.soundFn('dash');
+            addScreenFlash(s, '#44ccff', 0.1);
           }
-          btnRow++;
+          continue;
         }
-
-        // BLACK HOLE button
-        if (s.upgradeStats.hasBlackHole) {
-          btnCy = btnStartY + btnRow * (btnSize + btnGap) + btnSize / 2;
-          if (Math.hypot(t.clientX - btnCx, t.clientY - btnCy) <= btnRadius) {
-            // Double-click detection
-            if (now - s.input.lastBlackHoleClickTime < DOUBLE_CLICK_WINDOW) {
-              // Double-click confirmed, activate black hole
-              s.input.keys['KeyB'] = true;
-              s.input.lastBlackHoleClickTime = 0; // Reset for next double-click
-            } else {
-              // First click, record time
-              s.input.lastBlackHoleClickTime = now;
-            }
-            return;
+        if (t.clientX >= AF_BTN_X && t.clientX <= AF_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE) {
+          toggleSetting('autoFire');
+          continue;
+        }
+        // Assign touch to move (left half) or aim (right half) role based on start position
+        if (t.clientX < W * 0.5) {
+          if (this._moveTouchId == null) {
+            this._moveTouchId = t.identifier;
+            s.input.joystickCenter = { x: t.clientX, y: t.clientY };
+          }
+        } else {
+          if (this._aimTouchId == null) {
+            this._aimTouchId = t.identifier;
+            s.input.aimJoystickCenter = { x: t.clientX, y: t.clientY };
           }
         }
       }
     }
 
-    // Process joysticks and button clicks
-    // Reset touch fire/missile at start of frame
+    // Update joystick values from all active touches using their assigned roles
     s.input.touchFire = false;
     s.input.touchMissile = false;
 
     // Start with all touch inputs inactive for this frame
     let hasRightJoystick = false;
     for (const t of e.touches) {
-      // Left side: movement joystick ONLY — NO FIRING
-      if (t.clientX < W * 0.4) {
-        if (!s.input.joystickCenter) s.input.joystickCenter = { x: t.clientX, y: t.clientY };
+      if (this._moveTouchId !== null && t.identifier === this._moveTouchId) {
         const dx = t.clientX - s.input.joystickCenter.x;
         const dy = t.clientY - s.input.joystickCenter.y;
         const d = Math.hypot(dx, dy);
@@ -258,10 +211,7 @@ export default class GameScene extends Phaser.Scene {
           s.input.touchMove.y = dy / Math.max(d, JOYSTICK_RADIUS);
           s.input.touchMove.active = true;
         }
-        // NEVER set fire based on left joystick
-      } else {
-        // Right side: aiming and firing joystick ONLY
-        if (!s.input.aimJoystickCenter) s.input.aimJoystickCenter = { x: t.clientX, y: t.clientY };
+      } else if (this._aimTouchId !== null && t.identifier === this._aimTouchId) {
         const dx = t.clientX - s.input.aimJoystickCenter.x;
         const dy = t.clientY - s.input.aimJoystickCenter.y;
         const d = Math.hypot(dx, dy);
@@ -285,21 +235,28 @@ export default class GameScene extends Phaser.Scene {
   handleTouchEnd(e) {
     e.preventDefault();
     const s = this.s;
+    for (const t of e.changedTouches) {
+      if (this._moveTouchId !== null && t.identifier === this._moveTouchId) {
+        this._moveTouchId = null;
+        s.input.touchMove = { x: 0, y: 0, active: false };
+        s.input.joystickCenter = null;
+      } else if (this._aimTouchId !== null && t.identifier === this._aimTouchId) {
+        this._aimTouchId = null;
+        s.input.touchAim = { x: 0, y: 0, active: false };
+        s.input.aimJoystickCenter = null;
+        s.input.touchFire = false;
+        s.input.touchMissile = false;
+      }
+    }
     if (e.touches.length === 0) {
+      this._moveTouchId = null;
+      this._aimTouchId = null;
       s.input.touchMove = { x: 0, y: 0, active: false };
       s.input.touchAim = { x: 0, y: 0, active: false };
       s.input.joystickCenter = null;
       s.input.aimJoystickCenter = null;
       s.input.touchFire = false;
       s.input.touchMissile = false;
-    } else {
-      let hasLeft = false, hasRight = false;
-      for (const t of e.touches) {
-        if (t.clientX < s.W * 0.4) hasLeft = true;
-        else hasRight = true;
-      }
-      if (!hasLeft) { s.input.touchMove = { x: 0, y: 0, active: false }; s.input.joystickCenter = null; }
-      if (!hasRight) { s.input.touchAim = { x: 0, y: 0, active: false }; s.input.aimJoystickCenter = null; s.input.touchFire = false; s.input.touchMissile = false; }
     }
   }
 
@@ -562,17 +519,19 @@ export default class GameScene extends Phaser.Scene {
     const p = s.player;
     const zoom = this.isTouchDevice ? MOBILE_ZOOM : 1.0;
     // With zoom < 1, the viewport covers s.W/zoom × s.H/zoom world units
-    let cx = p.x - s.W / (2 * zoom);
-    let cy = p.y - s.H / (2 * zoom);
+    s.vW = s.W / zoom;
+    s.vH = s.H / zoom;
+    let cx = p.x - s.vW / 2;
+    let cy = p.y - s.vH / 2;
     if (s.input.touchAim.active) {
-      cx += s.input.touchAim.x * (s.W * 0.15) / zoom;
-      cy += s.input.touchAim.y * (s.H * 0.15) / zoom;
+      cx += s.input.touchAim.x * (s.vW * 0.15);
+      cy += s.input.touchAim.y * (s.vH * 0.15);
     } else if (!this.isTouchDevice) {
       cx += (s.input.mouseX - s.W / 2) * 0.12;
       cy += (s.input.mouseY - s.H / 2) * 0.12;
     }
-    s.camera.x = lerp(s.camera.x, clamp(cx, 0, Math.max(0, WORLD_W - s.W / zoom)), 0.08);
-    s.camera.y = lerp(s.camera.y, clamp(cy, 0, Math.max(0, WORLD_H - s.H / zoom)), 0.08);
+    s.camera.x = lerp(s.camera.x, clamp(cx, 0, Math.max(0, WORLD_W - s.vW)), 0.08);
+    s.camera.y = lerp(s.camera.y, clamp(cy, 0, Math.max(0, WORLD_H - s.vH)), 0.08);
   }
 
   /* ===== RENDER ===== */
