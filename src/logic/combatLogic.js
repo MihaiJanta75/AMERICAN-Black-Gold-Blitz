@@ -607,9 +607,11 @@ export function updateCombat(s, dt, soundFn) {
 
         // Frost Rounds: slow enemy
         if (s.upgradeLevels['frost_rounds'] > 0) {
+          // Save baseSpeed before modifying, so unfreeze can restore correctly
+          if (!e.baseSpeed) e.baseSpeed = e.speed;
           e.stunTimer = Math.max(e.stunTimer || 0, s.upgradeStats.frostRoundsDuration || 1.5);
           e.frosted = true;
-          e.speed = (e.baseSpeed || e.speed) * 0.7;
+          e.speed = e.baseSpeed * 0.7;
           spawnParticle(s, e.x, e.y, 0, -0.5, 0.3, 4, '#88ddff', 'circle');
           // Shatter Strike synergy: frozen enemies take bonus damage
           if (s.upgradeStats.hasShatterStrike) {
@@ -631,7 +633,7 @@ export function updateCombat(s, dt, soundFn) {
         // Toxic Rounds: apply poison on hit
         if (s.upgradeLevels['toxic_rounds'] > 0) {
           e.poisonTimer = Math.max(e.poisonTimer || 0, s.upgradeStats.toxicRoundsDuration || 2.0);
-          e.poisonDps = (s.upgradeStats.toxicRoundsDps || 3) * (s.upgradeStats.hasPoisonField ? 1 : 1);
+          e.poisonDps = s.upgradeStats.toxicRoundsDps || 3;
         }
 
         // Echo Strike: every Nth bullet fires a duplicate

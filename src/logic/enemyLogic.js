@@ -773,18 +773,13 @@ export function updateEnemies(s, dt, soundFn) {
 
     if (e.stunTimer > 0) {
       e.stunTimer -= dt;
-      // Unfreeze: restore speed when stun expires
-      if (e.stunTimer <= 0 && e.frosted) {
-        e.frosted = false;
-        e.speed = e.baseSpeed || e.speed;
-      }
       if (e.type === 'drone') e.rotorAngle += dt * 10;
       continue;
     }
-    // Frost: ensure speed is slowed while frosted
-    if (e.frosted && (e.stunTimer || 0) <= 0) {
+    // Unfreeze: restore speed when stun (frost) expires
+    if (e.frosted) {
       e.frosted = false;
-      e.speed = e.baseSpeed || e.speed;
+      if (e.baseSpeed) e.speed = e.baseSpeed;
     }
 
     // Poison tick damage

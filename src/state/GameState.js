@@ -727,7 +727,7 @@ export function getUpgradeCost(key, currentLevel) {
   if (!up) return 0;
   if (up.synergy) return 100;
   if (up.category === 'wildcard') return 80;  // wildcards cost flat 80 — painful but worth it
-  if (up.category === 'companion') return 60 + currentLevel * 20; // companions: 60/80/100... oil each stack
+  if (up.category === 'companion') return 60 + currentLevel * 20; // one-time pick cost: 60/80/100+; oil/s drain is in companionOilDrain
   if (up.rarity === 'legendary') return 80;
   if (up.rarity === 'rare' || up.rare) return 120;
   return UPGRADE_OIL_COST_BASE + currentLevel * 40;  // 50 / 90 / 130 for levels 1-3
