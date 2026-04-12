@@ -2,10 +2,12 @@ import { TILE } from '../constants.js';
 import { clamp } from '../utils.js';
 
 export function drawWater(ctx, s) {
-  const { camera, time, W, H } = s;
+  const { camera, time, W, H, vW, vH } = s;
+  const viewW = vW || W;
+  const viewH = vH || H;
 
   const sx = Math.floor(camera.x / TILE), sy = Math.floor(camera.y / TILE);
-  const ex = Math.ceil((camera.x + W) / TILE), ey = Math.ceil((camera.y + H) / TILE);
+  const ex = Math.ceil((camera.x + viewW) / TILE), ey = Math.ceil((camera.y + viewH) / TILE);
   for (let y = sy; y <= ey; y++) {
     for (let x = sx; x <= ex; x++) {
       const w = Math.sin(time * 1.5 + x * 0.5 + y * 0.3) * 0.02;
@@ -21,8 +23,8 @@ export function drawWater(ctx, s) {
   for (let y = sy; y <= ey; y += 2) { ctx.fillRect(sx * TILE + Math.sin(time * 2 + y * 0.4) * 20, y * TILE, (ex - sx) * TILE, 3); }
   ctx.globalAlpha = 0.04;
   for (let i = 0; i < 12; i++) {
-    const cx2 = camera.x + (Math.sin(time * 0.3 + i * 2.1) * 0.5 + 0.5) * W;
-    const cy2 = camera.y + (Math.cos(time * 0.2 + i * 1.7) * 0.5 + 0.5) * H;
+    const cx2 = camera.x + (Math.sin(time * 0.3 + i * 2.1) * 0.5 + 0.5) * viewW;
+    const cy2 = camera.y + (Math.cos(time * 0.2 + i * 1.7) * 0.5 + 0.5) * viewH;
     ctx.fillStyle = '#aaddff'; ctx.beginPath(); ctx.arc(cx2, cy2, 30 + Math.sin(time + i) * 15, 0, Math.PI * 2); ctx.fill();
   }
   ctx.globalAlpha = 1;
