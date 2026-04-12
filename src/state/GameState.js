@@ -224,7 +224,8 @@ export function getBulletDamage(s) {
   if ((s.upgradeStats.soulHarvestStacks || 0) > 0) dmg *= (1 + s.upgradeStats.soulHarvestStacks);
   // Soul Tithe synergy: soul stacks amplify Blood Tithe bonus
   if (s.upgradeStats.hasSoulTithe && (s.upgradeStats.soulHarvestStacks || 0) > 0) {
-    dmg *= (1 + s.upgradeStats.soulHarvestStacks * (s.upgradeStats.soulTithePctPerStack || 0.05));
+    const killCount = Math.round((s.upgradeStats.soulHarvestStacks || 0) / 0.01);
+    dmg *= (1 + killCount * (s.upgradeStats.soulTithePctPerStack || 0.05));
   }
   // Railgun mutation: bullets deal 2× damage
   if (s.upgradeStats.mutations?.railgun) dmg *= 2.0;
