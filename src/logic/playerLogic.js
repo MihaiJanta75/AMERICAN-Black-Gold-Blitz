@@ -73,14 +73,14 @@ export function updatePlayer(s, dt, soundFn) {
   if (inputLen > 0.1 && Math.random() < 0.5)
     spawnEngineTrail(s, p.x - Math.cos(p.angle) * 14, p.y - Math.sin(p.angle) * 14, p.angle);
 
-  // Aiming
+  // Aiming — on touch devices only the right stick controls the facing angle
   if (inp.touchAim.active) {
     p.angle = Math.atan2(inp.touchAim.y, inp.touchAim.x);
-  } else if (inp.touchMove.active && !inp.touchAim.active && inputLen > 0.01) {
-    p.angle = Math.atan2(iy, ix);
-  } else if (!inp.touchMove.active) {
+  } else if (!s.isTouchDevice) {
+    // PC: face the mouse cursor at all times
     p.angle = Math.atan2(inp.mouseY + s.camera.y - p.y, inp.mouseX + s.camera.x - p.x);
   }
+  // Mobile: left stick (touchMove) never changes the facing angle — only right stick does
 
   p.rotorAngle += dt * 25;
   p.tailRotorAngle += dt * 35;
@@ -249,8 +249,9 @@ export function updatePlayer(s, dt, soundFn) {
   // Firing
   p.fireCooldown -= dt;
   p.homingCooldown -= dt;
-  // Fire when: space key, mouse down, or right joystick on mobile
-  const wantFire   = inp.keys['Space'] || inp.mouseDown || inp.touchFire;
+  // autoFire only applies on touch devices AND only when the right aim stick is actively used
+  const autoFire = s.isTouchDevice && (s.settingsAutoFire || false) && inp.touchAim.active;
+  const wantFire   = inp.keys['Space'] || inp.mouseDown    || inp.touchFire    || autoFire;
   const wantMissile = inp.keys['KeyE']  || inp.rightMouseDown || inp.touchMissile;
 
   const isMissileWeapon = s.upgradeStats.activeWeapon === 'missile';
