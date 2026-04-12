@@ -247,6 +247,9 @@ export function drawHUD(ctx, s, settings) {
     ctx.fillText((evNames[ev.type] || ev.type) + ' ' + evTimer + 's', W / 2, pad + 56);
   }
 
+  // On mobile, bottom controls occupy the lower ~90px; keep HUD elements above that safe zone
+  const bottomSafe = s.isTouchDevice ? H - 92 : H;
+
   // Active powerups
   const activePows = Object.entries(s.activePowerups).filter(([, t]) => t > 0);
   if (activePows.length > 0) {
@@ -255,19 +258,21 @@ export function drawHUD(ctx, s, settings) {
       const lt = LOOT_TYPES['pow_' + effect];
       if (!lt) return;
       ctx.fillStyle = lt.color;
-      ctx.fillText(effect.toUpperCase() + ' ' + Math.ceil(timer) + 's', W / 2, H - 30 - idx * 16);
+      ctx.fillText(effect.toUpperCase() + ' ' + Math.ceil(timer) + 's', W / 2, bottomSafe - 30 - idx * 16);
     });
   }
 
   // Shield status
   if (s.upgradeStats.hasShield) {
     ctx.textAlign = 'right'; ctx.font = '12px monospace';
-    if (player.shieldActive) { ctx.fillStyle = '#aa44ff'; ctx.fillText('SHIELD READY', W - pad, H - 60); }
-    else { ctx.fillStyle = '#555'; ctx.fillText('SHIELD ' + Math.ceil(player.shieldTimer) + 's', W - pad, H - 60); }
+    if (player.shieldActive) { ctx.fillStyle = '#aa44ff'; ctx.fillText('SHIELD READY', W - pad, bottomSafe - 60); }
+    else { ctx.fillStyle = '#555'; ctx.fillText('SHIELD ' + Math.ceil(player.shieldTimer) + 's', W - pad, bottomSafe - 60); }
   }
 
-  // Minimap
-  const mmSize = Math.min(130, W * 0.2), mmX = W - mmSize - pad, mmY = H - mmSize - pad;
+  // Minimap — on mobile: top-right (below score/timer, above joystick); on PC: bottom-right
+  const mmSize = s.isTouchDevice ? Math.min(80, W * 0.2) : Math.min(130, W * 0.2);
+  const mmX = W - mmSize - pad;
+  const mmY = s.isTouchDevice ? 88 : H - mmSize - pad;
   ctx.fillStyle = 'rgba(0,15,30,0.78)';
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(mmX - 3, mmY - 3, mmSize + 6, mmSize + 6, 6); ctx.fill(); }
   else ctx.fillRect(mmX - 3, mmY - 3, mmSize + 6, mmSize + 6);
@@ -319,10 +324,10 @@ export function drawHUD(ctx, s, settings) {
   // Minimap: player
   ctx.fillStyle = '#44ff44'; ctx.beginPath(); ctx.arc(mmX + s.player.x * mmScale, mmY + s.player.y * mmScale, 3, 0, Math.PI * 2); ctx.fill();
 
-  // Kill feed
+  // Kill feed — on mobile start below the minimap to avoid overlap
   if (s.killFeed && s.killFeed.length > 0) {
     const kfX = W - pad;
-    let kfY = pad + 90;
+    let kfY = s.isTouchDevice ? mmY + mmSize + 16 : pad + 90;
     ctx.textAlign = 'right';
     for (const entry of s.killFeed) {
       const alpha = Math.min(1, entry.timer);
@@ -481,6 +486,8 @@ export function drawTouchControls(ctx, s, settings, isTouchDevice) {
 
 export function drawScreenEffects(ctx, s) {
   const { W, H, time, player } = s;
+  // On mobile, keep screen-bottom elements above the button row (bottom ~90px)
+  const bottomSafe = s.isTouchDevice ? H - 92 : H;
 
   if (s.screenFlash.alpha > 0.01) {
     ctx.globalAlpha = s.screenFlash.alpha;
@@ -517,16 +524,18 @@ export function drawScreenEffects(ctx, s) {
     ctx.fillRect(0, 0, W, H);
   }
 
-  // Dash cooldown bar
-  if (player.dashCooldown > 0 && player.alive) {
-    const dashPct = 1 - player.dashCooldown / DASH_COOLDOWN;
-    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(W / 2 - 30, H - 18, 60, 8);
-    ctx.fillStyle = dashPct >= 1 ? '#44ccff' : '#225577';
-    ctx.fillRect(W / 2 - 30, H - 18, 60 * dashPct, 8);
-    ctx.font = '7px monospace'; ctx.fillStyle = '#88ccff'; ctx.textAlign = 'center';
-    ctx.fillText('DASH [SHIFT]', W / 2, H - 22);
-  } else if (player.alive) {
-    ctx.font = '7px monospace'; ctx.fillStyle = 'rgba(68,204,255,0.5)'; ctx.textAlign = 'center';
-    ctx.fillText('DASH READY [SHIFT]', W / 2, H - 10);
+  // Dash cooldown bar — on PC only (mobile has a dedicated DASH button in touch controls)
+  if (!s.isTouchDevice) {
+    if (player.dashCooldown > 0 && player.alive) {
+      const dashPct = 1 - player.dashCooldown / DASH_COOLDOWN;
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(W / 2 - 30, bottomSafe - 18, 60, 8);
+      ctx.fillStyle = dashPct >= 1 ? '#44ccff' : '#225577';
+      ctx.fillRect(W / 2 - 30, bottomSafe - 18, 60 * dashPct, 8);
+      ctx.font = '7px monospace'; ctx.fillStyle = '#88ccff'; ctx.textAlign = 'center';
+      ctx.fillText('DASH [SHIFT]', W / 2, bottomSafe - 22);
+    } else if (player.alive) {
+      ctx.font = '7px monospace'; ctx.fillStyle = 'rgba(68,204,255,0.5)'; ctx.textAlign = 'center';
+      ctx.fillText('DASH READY [SHIFT]', W / 2, bottomSafe - 10);
+    }
   }
 }

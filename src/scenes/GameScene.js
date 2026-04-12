@@ -11,6 +11,9 @@ import {
 import { getSettings, toggleSetting, getHighScore, saveHighScore } from '../SettingsManager.js';
 import { initAudio, playSound } from '../SoundManager.js';
 
+// Mobile viewport zoom-out factor — shows more of the world on small screens
+const MOBILE_ZOOM = 0.7;
+
 // Logic
 import { updatePlayer } from '../logic/playerLogic.js';
 import { spawnWave, updateEnemies, updateRigRecapture } from '../logic/enemyLogic.js';
@@ -490,17 +493,19 @@ export default class GameScene extends Phaser.Scene {
   updateCamera() {
     const s = this.s;
     const p = s.player;
-    let cx = p.x - s.W / 2;
-    let cy = p.y - s.H / 2;
+    const zoom = this.isTouchDevice ? MOBILE_ZOOM : 1.0;
+    // With zoom < 1, the viewport covers s.W/zoom × s.H/zoom world units
+    let cx = p.x - s.W / (2 * zoom);
+    let cy = p.y - s.H / (2 * zoom);
     if (s.input.touchAim.active) {
-      cx += s.input.touchAim.x * s.W * 0.15;
-      cy += s.input.touchAim.y * s.H * 0.15;
+      cx += s.input.touchAim.x * (s.W * 0.15) / zoom;
+      cy += s.input.touchAim.y * (s.H * 0.15) / zoom;
     } else if (!this.isTouchDevice) {
       cx += (s.input.mouseX - s.W / 2) * 0.12;
       cy += (s.input.mouseY - s.H / 2) * 0.12;
     }
-    s.camera.x = lerp(s.camera.x, clamp(cx, 0, Math.max(0, WORLD_W - s.W)), 0.08);
-    s.camera.y = lerp(s.camera.y, clamp(cy, 0, Math.max(0, WORLD_H - s.H)), 0.08);
+    s.camera.x = lerp(s.camera.x, clamp(cx, 0, Math.max(0, WORLD_W - s.W / zoom)), 0.08);
+    s.camera.y = lerp(s.camera.y, clamp(cy, 0, Math.max(0, WORLD_H - s.H / zoom)), 0.08);
   }
 
   /* ===== RENDER ===== */
@@ -521,9 +526,11 @@ export default class GameScene extends Phaser.Scene {
       if (s.gameState === 'title') {
         drawTitle(ctx, s);
       } else if (s.gameState === 'playing' || s.gameState === 'upgrade' || s.gameState === 'paused' || s.gameState === 'gameover') {
-        // Draw world
+        // Draw world with mobile zoom-out applied so more of the world is visible on small screens
         ctx.save();
         if (s.shakeAmount > 0) ctx.translate(rand(-s.shakeAmount, s.shakeAmount), rand(-s.shakeAmount, s.shakeAmount));
+        const zoom = this.isTouchDevice ? MOBILE_ZOOM : 1.0;
+        if (zoom !== 1.0) ctx.scale(zoom, zoom);
         ctx.translate(-s.camera.x, -s.camera.y);
         drawWater(ctx, s);
         drawTerritories(ctx, s);
