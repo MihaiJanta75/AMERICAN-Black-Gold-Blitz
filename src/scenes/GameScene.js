@@ -168,6 +168,11 @@ export default class GameScene extends Phaser.Scene {
     const PAUSE_BTN_X = W - 50;
     const PAUSE_BTN_Y = 10;
     const PAUSE_BTN_SIZE = 30;
+    // Mobile action button layout — must match drawTouchControls in drawHUD.js
+    const MOBILE_BTN_SIZE = 50;
+    const MOBILE_BTN_GAP = 12;
+    const DASH_BTN_X = W - MOBILE_BTN_SIZE - 14;
+    const DASH_BTN_Y = H - MOBILE_BTN_SIZE * 3 - MOBILE_BTN_GAP * 2 - 20;
 
     // On touchstart, assign each new touch to a joystick role based on its starting position.
     // We track roles by touch identifier so the left stick can never accidentally shoot.
@@ -176,7 +181,7 @@ export default class GameScene extends Phaser.Scene {
         if (t.clientX > PAUSE_BTN_X && t.clientY < PAUSE_BTN_Y + PAUSE_BTN_SIZE) {
           this.togglePause(); return;
         }
-        if (t.clientX >= DASH_BTN_X && t.clientX <= DASH_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE) {
+        if (t.clientX >= DASH_BTN_X && t.clientX <= DASH_BTN_X + MOBILE_BTN_SIZE && t.clientY >= DASH_BTN_Y && t.clientY < DASH_BTN_Y + MOBILE_BTN_SIZE) {
           if (s.player.dashCooldown <= 0 && s.input.touchMove.active) {
             const dashA = Math.atan2(s.input.touchMove.y, s.input.touchMove.x);
             s.player.dashing = DASH_DURATION;
@@ -185,10 +190,6 @@ export default class GameScene extends Phaser.Scene {
             this.soundFn('dash');
             addScreenFlash(s, '#44ccff', 0.1);
           }
-          continue;
-        }
-        if (t.clientX >= AF_BTN_X && t.clientX <= AF_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE) {
-          toggleSetting('autoFire');
           continue;
         }
         // Assign touch to move (left half) or aim (right half) role based on start position
