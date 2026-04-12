@@ -1,6 +1,7 @@
 import {
   WORLD_W, WORLD_H, WANTED_THRESHOLDS,
   DRONE_DAMAGE, PLANE_DAMAGE, CHOPPER_DAMAGE, BOSS_THRESHOLD,
+  PLANE_BASE_SPEED,
   RIG_RECAPTURE_INTERVAL, CAPTURE_RADIUS, CAPTURE_TIME,
   HIVE_ALERT_RADIUS, HIVE_ALERT_DECAY, COMMANDER_BUFF_RADIUS,
   KAMIKAZE_EXPLOSION_RADIUS, KAMIKAZE_DAMAGE, KAMIKAZE_RUSH_RANGE,
@@ -98,7 +99,7 @@ export function spawnPlane(s, edge, faction) {
     case 2: x = rand(0, WORLD_W); y = WORLD_H + 40;    ang = -Math.PI / 2 + rand(-0.3, 0.3); break;
     default: x = -40;            y = rand(0, WORLD_H); ang = rand(-0.3, 0.3); break;
   }
-  const spd = (5.2 * tm.speed) + s.wantedLevel * 0.4;
+  const spd = (PLANE_BASE_SPEED * tm.speed) + s.wantedLevel * 0.4;
   const e = makeEnemyBase({
     type: 'plane', x, y, vx: 0, vy: 0,
     hp: 50 * tm.hp, maxHp: 50 * tm.hp, angle: ang,
@@ -107,6 +108,52 @@ export function spawnPlane(s, edge, faction) {
     fireCooldown: 0, propAngle: 0,
     faction, isBoss: false, subType: 'normal',
     aiState: 'flyby',
+  });
+  applyAiUpgrades(s, e);
+  s.enemies.push(e);
+}
+
+export function spawnHeavyGunship(s, sx, sy, faction) {
+  faction = faction || 'red';
+  const f = FACTIONS[faction] || FACTIONS.red;
+  const tm = TIER_MULTS[f.tier] || TIER_MULTS[1];
+  const spd = 1.0 * tm.speed;
+  const hp = 180 * tm.hp;
+  const e = makeEnemyBase({
+    type: 'chopper', x: sx, y: sy, vx: 0, vy: 0,
+    hp, maxHp: hp, angle: 0,
+    speed: spd, baseSpeed: spd,
+    damage: 45, radius: 26, scoreValue: 300 * tm.score,
+    fireCooldown: 0, rotorAngle: 0, tailRotorAngle: 0,
+    faction, isBoss: false, subType: 'heavy_gunship',
+    aiState: 'orbit',
+  });
+  applyAiUpgrades(s, e);
+  s.enemies.push(e);
+}
+
+export function spawnStealthInfiltrator(s, edge, faction) {
+  faction = faction || 'red';
+  const f = FACTIONS[faction] || FACTIONS.red;
+  const tm = TIER_MULTS[f.tier] || TIER_MULTS[1];
+  let x, y;
+  switch (edge) {
+    case 0: x = rand(0, WORLD_W); y = -40;             break;
+    case 1: x = WORLD_W + 40;    y = rand(0, WORLD_H); break;
+    case 2: x = rand(0, WORLD_W); y = WORLD_H + 40;    break;
+    default: x = -40;            y = rand(0, WORLD_H); break;
+  }
+  const spd = 2.0 * tm.speed;
+  const hp = 40 * tm.hp;
+  const e = makeEnemyBase({
+    type: 'drone', x, y, vx: 0, vy: 0,
+    hp, maxHp: hp, angle: 0,
+    speed: spd, baseSpeed: spd,
+    damage: 15, radius: 12, scoreValue: 200 * tm.score,
+    fireCooldown: 9999,
+    faction, isBoss: false, subType: 'stealth_infiltrator',
+    stealthMode: true, // semi-transparent until within 100px of target
+    aiState: 'chase',
   });
   applyAiUpgrades(s, e);
   s.enemies.push(e);
@@ -180,6 +227,89 @@ export function spawnBoss(s, x, y) {
   s.enemies.push(e);
 }
 
+/* ===== ARMED ENEMY SUBTYPES =====
+ * Enemies with specialized weapon loadouts. Appear in phase 2+ waves. ===== */
+
+export function spawnChainGunner(s, x, y, faction) {
+  faction = faction || 'red';
+  const f = FACTIONS[faction] || FACTIONS.red;
+  const tm = TIER_MULTS[f.tier] || TIER_MULTS[1];
+  const spd = 2.2 * tm.speed + s.wantedLevel * 0.2;
+  const hp  = 50 * tm.hp;
+  const e = makeEnemyBase({
+    type: 'drone', x, y, vx: 0, vy: 0,
+    hp, maxHp: hp, angle: 0,
+    speed: spd, baseSpeed: spd,
+    damage: 10, radius: 15, scoreValue: 80 * tm.score,
+    rotorAngle: Math.random() * Math.PI * 2,
+    faction, isBoss: false, subType: 'chain_gunner',
+    weaponType: 'chain_gun',
+    fireCooldown: 0, shieldBubbleTimer: 0,
+  });
+  applyAiUpgrades(s, e);
+  s.enemies.push(e);
+}
+
+export function spawnPlasmaTrooper(s, x, y, faction) {
+  faction = faction || 'blue';
+  const f = FACTIONS[faction] || FACTIONS.blue;
+  const tm = TIER_MULTS[f.tier] || TIER_MULTS[1];
+  const spd = 1.5 * tm.speed;
+  const hp  = 100 * tm.hp;
+  const e = makeEnemyBase({
+    type: 'chopper', x, y, vx: 0, vy: 0,
+    hp, maxHp: hp, angle: 0,
+    speed: spd, baseSpeed: spd,
+    damage: 55, radius: 20, scoreValue: 200 * tm.score,
+    rotorAngle: 0, tailRotorAngle: 0,
+    faction, isBoss: false, subType: 'plasma_trooper',
+    weaponType: 'plasma_cannon',
+    fireCooldown: 0, aiState: 'orbit',
+  });
+  applyAiUpgrades(s, e);
+  s.enemies.push(e);
+}
+
+export function spawnFlakTrooper(s, x, y, faction) {
+  faction = faction || 'yellow';
+  const f = FACTIONS[faction] || FACTIONS.yellow;
+  const tm = TIER_MULTS[f.tier] || TIER_MULTS[1];
+  const spd = 2.0 * tm.speed + s.wantedLevel * 0.15;
+  const hp  = 45 * tm.hp;
+  const e = makeEnemyBase({
+    type: 'drone', x, y, vx: 0, vy: 0,
+    hp, maxHp: hp, angle: 0,
+    speed: spd, baseSpeed: spd,
+    damage: 8, radius: 14, scoreValue: 70 * tm.score,
+    rotorAngle: Math.random() * Math.PI * 2,
+    faction, isBoss: false, subType: 'flak_trooper',
+    weaponType: 'flak_cannon',
+    fireCooldown: 0, shieldBubbleTimer: 0,
+  });
+  applyAiUpgrades(s, e);
+  s.enemies.push(e);
+}
+
+export function spawnLaserSniper(s, x, y, faction) {
+  faction = faction || 'purple';
+  const f = FACTIONS[faction] || FACTIONS.purple;
+  const tm = TIER_MULTS[f.tier] || TIER_MULTS[1];
+  const spd = 1.8 * tm.speed;
+  const hp  = 35 * tm.hp;
+  const e = makeEnemyBase({
+    type: 'drone', x, y, vx: 0, vy: 0,
+    hp, maxHp: hp, angle: 0,
+    speed: spd, baseSpeed: spd,
+    damage: 40, radius: 12, scoreValue: 120 * tm.score,
+    rotorAngle: Math.random() * Math.PI * 2,
+    faction, isBoss: false, subType: 'laser_sniper',
+    weaponType: 'laser_rifle',
+    fireCooldown: 0, shieldBubbleTimer: 0,
+  });
+  applyAiUpgrades(s, e);
+  s.enemies.push(e);
+}
+
 /* ===== WAVE ROLES =====
  * Named roles replace the old roll-based composition.
  * Each role has a clear purpose and a defined escort pattern. ===== */
@@ -197,6 +327,14 @@ function roleStrikeForce(s, sx, sy, faction, threatLevel) {
   for (let i = 0; i < count; i++) {
     const sub = i === 0 && Math.random() < 0.3 ? 'scout' : 'normal';
     spawnDrone(s, sx + rand(-60, 60), sy + rand(-60, 60), i < 2 ? lead : escort, sub);
+  }
+  // Phase 2+: 15% chance to include a Stealth Infiltrator targeting a rig
+  const t = s.time || 0;
+  if (t >= 90 && Math.random() < 0.15) {
+    spawnStealthInfiltrator(s, randInt(0, 3), faction);
+    const infiltrator = s.enemies[s.enemies.length - 1];
+    const rigs = s.rigs.filter(r => r.owner === 'player');
+    if (rigs.length > 0) infiltrator.targetRig = rigs[Math.floor(Math.random() * rigs.length)];
   }
 }
 
@@ -264,9 +402,33 @@ function roleFullAssault(s, sx, sy, faction, threatLevel) {
   const e2 = escortFaction(e1);
   spawnChopper(s, sx, sy, faction, Math.random() < 0.4 ? 'command' : 'normal');
   spawnPlane(s, randInt(0, 3), faction);
-  spawnPlane(s, randInt(0, 3), e1);
+  // Phase 3+ (t ≥ 180s): replace second plane with Heavy Gunship anchor unit
+  const t = s.time || 0;
+  if (t >= 180) {
+    spawnHeavyGunship(s, sx + rand(-60, 60), sy + rand(-60, 60), faction);
+  } else {
+    spawnPlane(s, randInt(0, 3), e1);
+  }
   for (let i = 0; i < 2 + Math.min(3, threatLevel - 3); i++)
     spawnDrone(s, sx + rand(-80, 80), sy + rand(-80, 80), i % 2 === 0 ? e1 : e2, 'normal');
+}
+
+function roleArmedSquad(s, sx, sy, faction, threatLevel) {
+  // Picks 1-3 armed enemy types based on threat level
+  const picks = Math.min(3, 1 + Math.floor(threatLevel / 2));
+  const spawnFns = [
+    () => spawnChainGunner(s, sx + rand(-50, 50), sy + rand(-50, 50), faction),
+    () => spawnFlakTrooper(s, sx + rand(-50, 50), sy + rand(-50, 50), faction),
+    () => spawnPlasmaTrooper(s, sx + rand(-40, 40), sy + rand(-40, 40), faction),
+    () => spawnLaserSniper(s, sx + rand(-60, 60), sy + rand(-60, 60), faction),
+  ];
+  // Shuffle and pick
+  const shuffled = spawnFns.sort(() => Math.random() - 0.5);
+  for (let i = 0; i < picks && i < shuffled.length; i++) {
+    shuffled[i]();
+  }
+  // Add a normal drone escort
+  spawnDrone(s, sx + rand(-40, 40), sy + rand(-40, 40), escortFaction(faction), 'normal');
 }
 
 /* ===== WAVE SPAWNING ===== */
@@ -331,14 +493,15 @@ export function spawnWave(s, dt) {
 
   // Role weights per phase. Keys map to weight values.
   const roleWeights = {
-    patrol:       timePhase < 2 ? 80 : 10,
-    strike:       timePhase >= 1 ? 35 : 5,
-    interceptors: timePhase >= 2 ? 25 : 0,
-    siege:        timePhase >= 2 && richestRig ? 20 : 0,
-    command_squad:timePhase >= 3 ? 20 : 0,
-    resource_raid:timePhase >= 3 && richestRig ? 15 : 0,
-    assassination:timePhase >= 3 ? 12 : 0,
-    full_assault: timePhase >= 4 ? 18 : 0,
+    patrol:         timePhase < 2 ? 80 : 10,
+    strike:         timePhase >= 1 ? 35 : 5,
+    interceptors:   timePhase >= 2 ? 25 : 0,
+    siege:          timePhase >= 2 && richestRig ? 20 : 0,
+    command_squad:  timePhase >= 3 ? 20 : 0,
+    resource_raid:  timePhase >= 3 && richestRig ? 15 : 0,
+    assassination:  timePhase >= 3 ? 12 : 0,
+    full_assault:   timePhase >= 4 ? 18 : 0,
+    armed_squad:    timePhase >= 2 ? 22 : 0,  // chain guns, plasma, flak, laser
   };
 
   // Surge overrides: only combat roles
@@ -364,6 +527,7 @@ export function spawnWave(s, dt) {
     case 'resource_raid': roleResourceRaid(s, richestRig, faction); break;
     case 'assassination': roleAssassination(s, sx, sy, faction); break;
     case 'full_assault':  roleFullAssault(s, sx, sy, faction, threatLevel); break;
+    case 'armed_squad':   roleArmedSquad(s, sx, sy, faction, threatLevel); break;
     default:              rolePatrol(s, sx, sy, faction);
   }
 
@@ -533,11 +697,6 @@ export function updateEnemies(s, dt, soundFn) {
   applyShieldDroneEffect(s);
   updateFactionRivalry(s, dt);
 
-  // Night mode: all enemies get +20% speed
-  if (s.nightMode) {
-    for (const e of s.enemies) { e.speed = e.baseSpeed * (e.commanderBuffed ? 1.2 * 1.2 : 1.2); }
-  }
-
   // Blackout storm event: +30% enemy speed
   if (s.activeEvent?.type === 'blackout_storm') {
     for (const e of s.enemies) { e.speed = Math.max(e.speed, e.baseSpeed * 1.3); }
@@ -638,6 +797,19 @@ export function updateEnemies(s, dt, soundFn) {
         e.targetRig = playerRigs.reduce((best, r) => dist(e, r) < dist(e, best) ? r : best, playerRigs[0]);
         chaseTarget = e.targetRig;
       }
+    }
+
+    // Stealth infiltrators exclusively target rigs; ignore the player
+    if (e.subType === 'stealth_infiltrator') {
+      if (!e.targetRig || e.targetRig.owner !== 'player') {
+        const playerRigs = s.rigs.filter(r => r.owner === 'player');
+        if (playerRigs.length > 0) {
+          e.targetRig = playerRigs.reduce((best, r) => dist(e, r) < dist(e, best) ? r : best, playerRigs[0]);
+        } else {
+          e.targetRig = null;
+        }
+      }
+      if (e.targetRig) chaseTarget = e.targetRig;
     }
 
     /* ===== DRONE LOGIC ===== */
@@ -749,6 +921,36 @@ export function updateEnemies(s, dt, soundFn) {
       e.y = clamp(e.y, 10, WORLD_H - 10);
       e.angle = Math.atan2(e.vy, e.vx);
 
+      // Armed drone shooting (chain_gun, flak_cannon, laser_rifle)
+      if (e.weaponType && e.fireCooldown !== undefined) {
+        e.fireCooldown -= dt;
+        const dToPlayer = dist(e, player);
+        const fac = FACTIONS[e.faction] || FACTIONS.red;
+        if (e.fireCooldown <= 0 && dToPlayer < 500) {
+          const pa = angle(e, player);
+          if (e.weaponType === 'chain_gun') {
+            // Rapid 3-round burst, low damage
+            for (let cg = 0; cg < 3; cg++) {
+              const ca = pa + rand(-0.08, 0.08);
+              s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(ca)*9, vy: Math.sin(ca)*9, life: 1.4, damage: e.damage, color: fac.accent });
+            }
+            e.fireCooldown = 0.18 + rand(-0.02, 0.02);
+          } else if (e.weaponType === 'flak_cannon' && dToPlayer < 300) {
+            // Wide spread pellets at close range
+            const pellets = 6;
+            for (let fl = 0; fl < pellets; fl++) {
+              const fa = pa + (fl - (pellets-1)/2) * 0.22 + rand(-0.04, 0.04);
+              s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(fa)*5.5, vy: Math.sin(fa)*5.5, life: 0.6, damage: e.damage, color: fac.accent });
+            }
+            e.fireCooldown = 1.4 + rand(-0.1, 0.1);
+          } else if (e.weaponType === 'laser_rifle') {
+            // Fast accurate long-range shot
+            s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa)*14, vy: Math.sin(pa)*14, life: 2.8, damage: e.damage, color: '#00ffcc' });
+            e.fireCooldown = 2.2 + rand(-0.2, 0.2);
+          }
+        }
+      }
+
       // Kamikaze collision handled in combatLogic
     }
 
@@ -785,11 +987,10 @@ export function updateEnemies(s, dt, soundFn) {
     /* ===== BOMBER LOGIC ===== */
     if (e.type === 'bomber') {
       e.propAngle = (e.propAngle || 0) + dt * 30;
-      const nightSpeedMult = s.nightMode ? 1.2 : 1.0;
       if (!e.bombDropped && e.targetRig) {
         const a = angle(e, e.targetRig);
-        e.vx = lerp(e.vx, Math.cos(a) * e.speed * nightSpeedMult, 0.04);
-        e.vy = lerp(e.vy, Math.sin(a) * e.speed * nightSpeedMult, 0.04);
+        e.vx = lerp(e.vx, Math.cos(a) * e.speed, 0.04);
+        e.vy = lerp(e.vy, Math.sin(a) * e.speed, 0.04);
         e.angle = a;
         e.x += e.vx;
         e.y += e.vy;
@@ -860,12 +1061,18 @@ export function updateEnemies(s, dt, soundFn) {
       const fireRate = e.isBoss ? 0.5 : Math.max(0.6, 1.2 - s.wantedLevel * 0.1 - (hm.alertLevel > 0.6 ? 0.25 : 0));
       if (e.fireCooldown <= 0 && dist(e, player) < fireRange) {
         const pa = angle(e, player);
-        s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa) * 5, vy: Math.sin(pa) * 5, life: 2.5, damage: e.damage, color: FACTIONS[e.faction].accent });
-        if (e.isBoss || e.subType === 'command') {
-          s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa + 0.18) * 5, vy: Math.sin(pa + 0.18) * 5, life: 2.5, damage: e.damage, color: FACTIONS[e.faction].accent });
-          s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa - 0.18) * 5, vy: Math.sin(pa - 0.18) * 5, life: 2.5, damage: e.damage, color: FACTIONS[e.faction].accent });
+        if (e.weaponType === 'plasma_cannon') {
+          // Slow heavy plasma ball
+          s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa)*3, vy: Math.sin(pa)*3, life: 4.5, damage: e.damage, color: '#cc44ff', isPlasma: true });
+          e.fireCooldown = 3.0 + rand(-0.3, 0.3);
+        } else {
+          s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa) * 5, vy: Math.sin(pa) * 5, life: 2.5, damage: e.damage, color: FACTIONS[e.faction].accent });
+          if (e.isBoss || e.subType === 'command') {
+            s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa + 0.18) * 5, vy: Math.sin(pa + 0.18) * 5, life: 2.5, damage: e.damage, color: FACTIONS[e.faction].accent });
+            s.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(pa - 0.18) * 5, vy: Math.sin(pa - 0.18) * 5, life: 2.5, damage: e.damage, color: FACTIONS[e.faction].accent });
+          }
+          e.fireCooldown = fireRate;
         }
-        e.fireCooldown = fireRate;
       }
     }
   }

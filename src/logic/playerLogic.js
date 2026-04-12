@@ -1,6 +1,6 @@
 import {
   WORLD_W, WORLD_H, DASH_SPEED, DASH_DURATION, DASH_COOLDOWN,
-  DUAL_CANNON_THRESHOLD, HOMING_THRESHOLD, HOMING_COOLDOWN_MS, HOMING_SPEED,
+  HOMING_COOLDOWN_MS, HOMING_SPEED,
   OIL_COST_PER_BULLET, OIL_COST_PER_MISSILE,
   OIL_CRITICAL_THRESHOLD, OIL_FLUSH_THRESHOLD,
   FORTIFY_TURRET_COOLDOWN, FORTIFY_TURRET_RANGE,
@@ -110,7 +110,8 @@ export function updatePlayer(s, dt, soundFn) {
     let stunCount = 0;
     // Check combo window with Black Hole
     const comboActive = (s.lastAbilityType === 'black_hole') && (s.time - s.lastAbilityTime < 2.0);
-    const stunDur = comboActive ? 6.0 : 4.0; // combo: 50% longer stun
+    const baseStun = 4.0 + (s.upgradeStats.timeWarpStunBonus || 0);
+    const stunDur = comboActive ? baseStun * 1.5 : baseStun; // combo: 50% longer stun
     for (const e of s.enemies) {
       const sx = e.x - cam.x, sy = e.y - cam.y;
       if (sx >= -100 && sx <= s.W + 100 && sy >= -100 && sy <= s.H + 100) {
@@ -126,7 +127,7 @@ export function updatePlayer(s, dt, soundFn) {
       spawnFloatingText(s, p.x, p.y - 60, '💥 COMBO! FREEZE BLAST!', '#aa44ff', 18);
       addScreenFlash(s, '#440088', 0.28);
     }
-    s.timeWarpCooldown = 15;
+    s.timeWarpCooldown = Math.max(5, 15 - (s.upgradeStats.timeWarpCooldownBonus || 0));
     s.lastAbilityTime = s.time;
     s.lastAbilityType = 'time_warp';
     addScreenFlash(s, '#aa88ff', 0.18);
@@ -137,10 +138,11 @@ export function updatePlayer(s, dt, soundFn) {
   // Black hole bomb (B key)
   if (inp.keys['KeyB'] && s.upgradeStats.hasBlackHole && s.blackHoleCooldown <= 0 && p.oil >= BLACK_HOLE_COST) {
     p.oil -= BLACK_HOLE_COST;
-    s.blackHoleCooldown = BLACK_HOLE_COOLDOWN;
+    s.blackHoleCooldown = Math.max(5, BLACK_HOLE_COOLDOWN - (s.upgradeStats.blackHoleCooldownBonus || 0));
     // Check combo window with Time Warp
     const comboActive = (s.lastAbilityType === 'time_warp') && (s.time - s.lastAbilityTime < 2.0);
-    const bhRadius = comboActive ? BLACK_HOLE_RADIUS * 2 : BLACK_HOLE_RADIUS;
+    const bhBaseRadius = BLACK_HOLE_RADIUS + (s.upgradeStats.blackHoleRadiusBonus || 0);
+    const bhRadius = comboActive ? bhBaseRadius * 2 : bhBaseRadius;
     const bhDmg = comboActive ? BLACK_HOLE_DAMAGE * 3 : BLACK_HOLE_DAMAGE;
     s.lastAbilityTime = s.time;
     s.lastAbilityType = 'black_hole';
@@ -252,13 +254,22 @@ export function updatePlayer(s, dt, soundFn) {
   const wantFire   = inp.keys['Space'] || inp.mouseDown    || inp.touchFire    || autoFire;
   const wantMissile = inp.keys['KeyE']  || inp.rightMouseDown || inp.touchMissile;
 
+  const isMissileWeapon = s.upgradeStats.activeWeapon === 'missile';
   if (wantFire && p.fireCooldown <= 0 && p.oil > OIL_COST_PER_BULLET) {
-    fireBullet(s, soundFn);
-    // Rampage: +40% fire rate (shorter cooldown)
-    const rampageFireMod = p.rampageActive ? 0.6 : 1.0;
-    p.fireCooldown = getReloadTime(s) * rampageFireMod;
+    if (isMissileWeapon) {
+      if (fireHoming(s, soundFn)) {
+        const rampageFireMod = p.rampageActive ? 0.6 : 1.0;
+        p.fireCooldown = getReloadTime(s) * rampageFireMod * 1.5; // missiles fire slower
+      }
+    } else {
+      fireBullet(s, soundFn);
+      const rampageFireMod = p.rampageActive ? 0.6 : 1.0;
+      const wCooldownMult = (WEAPON_CONFIGS[s.upgradeStats.activeWeapon || 'default'] || WEAPON_CONFIGS.default).cooldownMult;
+      p.fireCooldown = getReloadTime(s) * rampageFireMod * wCooldownMult;
+    }
   }
-  if (wantMissile && p.homingCooldown <= 0 && p.oil >= HOMING_THRESHOLD) {
+  // E key / right-click still fires homing missile secondary (only if not missile weapon)
+  if (wantMissile && !isMissileWeapon && p.homingCooldown <= 0 && p.oil >= 300 && s.upgradeStats.hasWarhead) {
     if (fireHoming(s, soundFn)) p.homingCooldown = HOMING_COOLDOWN_MS / 1000;
   }
 
@@ -299,6 +310,9 @@ export function updatePlayer(s, dt, soundFn) {
     }
   }
 
+  // Companion drones (scout, combat, shield, repair, bomber)
+  updateCompanions(s, dt, p, soundFn);
+
   // Fortify rig turrets
   if (s.upgradeStats.hasFortify) {
     for (const rig of s.rigs) {
@@ -318,84 +332,399 @@ export function updatePlayer(s, dt, soundFn) {
   }
 }
 
+/* Weapon stat bonuses per stack + fire cooldown multiplier for each weapon */
+const WEAPON_CONFIGS = {
+  default:      { dmgPerStack: 0,    firePerStack: 0,    cooldownMult: 1.00 },
+  dual:         { dmgPerStack: 0.10, firePerStack: 0.08, cooldownMult: 1.00 },
+  triple:       { dmgPerStack: 0.08, firePerStack: 0,    cooldownMult: 1.10 },
+  shotgun:      { dmgPerStack: 0.08, firePerStack: 0,    cooldownMult: 1.60 },
+  sniper:       { dmgPerStack: 0.12, firePerStack: 0,    cooldownMult: 4.00 },
+  machinegun:   { dmgPerStack: 0,    firePerStack: 0.06, cooldownMult: 0.22 }, // very fast
+  missile:      { dmgPerStack: 0.10, firePerStack: 0,    cooldownMult: 1.50 },
+  rocket:       { dmgPerStack: 0.10, firePerStack: 0,    cooldownMult: 1.40 },
+  grenade:      { dmgPerStack: 0.10, firePerStack: 0,    cooldownMult: 2.20 },
+  chain_gun:    { dmgPerStack: 0.05, firePerStack: 0.05, cooldownMult: 0.18 }, // ultra-rapid
+  plasma:       { dmgPerStack: 0.15, firePerStack: 0,    cooldownMult: 3.50 }, // very slow, heavy
+  flak:         { dmgPerStack: 0.08, firePerStack: 0,    cooldownMult: 1.80 }, // spread burst
+  laser_rifle:  { dmgPerStack: 0.12, firePerStack: 0,    cooldownMult: 2.80 }, // slow, precise
+};
+
+function getWeaponMult(s, stat) {
+  const wName = s.upgradeStats.activeWeapon || 'default';
+  const cfg = WEAPON_CONFIGS[wName] || WEAPON_CONFIGS.default;
+  const lvl = (s.upgradeStats.weaponLevels?.[wName] || 1);
+  const extraStacks = Math.max(0, lvl - 1); // first pick = 0 bonus stacks
+  if (stat === 'dmg') return 1 + extraStacks * cfg.dmgPerStack;
+  if (stat === 'fire') return 1 + extraStacks * cfg.firePerStack;
+  return 1;
+}
+
+
 function fireBullet(s, soundFn) {
   const p = s.player;
-  const hasDual = p.oil >= DUAL_CANNON_THRESHOLD;
-  const spreadCount = s.upgradeStats.spreadCount;
-  const offsets = hasDual ? [-8, 8] : [0];
-  const spreadAngle = 0.12;
+  const weapon = s.upgradeStats.activeWeapon || 'default';
   const bSpeed = getBulletSpeed(s);
-  const bDmg = getBulletDamage(s);
+  const bDmg   = getBulletDamage(s) * getWeaponMult(s, 'dmg');
   const pierce = getBulletPenetration(s);
   const critMult = getCritMult(s);
+  const critChance = s.upgradeStats.critChance || 0;
+  const perpAngle = p.angle + Math.PI / 2;
 
-  for (const off of offsets) {
-    const perpAngle = p.angle + Math.PI / 2;
-    const bx = p.x + Math.cos(perpAngle) * off;
-    const by = p.y + Math.sin(perpAngle) * off;
-
-    // ── Minigun mutation: 5-bullet tight burst replaces normal shot ──────────
-    if (s.upgradeStats.mutations?.minigun_mode) {
-      for (let mn = 0; mn < 5; mn++) {
-        const ma = p.angle + (mn - 2) * 0.04 + rand(-0.01, 0.01);
-        s.bullets.push({ x: bx, y: by, vx: Math.cos(ma) * bSpeed * 1.3, vy: Math.sin(ma) * bSpeed * 1.3, life: 1.6, damage: bDmg * 0.7, crit: false, pierce });
-      }
-      spawnMuzzleFlash(s, bx, by, p.angle);
-      spawnMuzzleFlash(s, bx, by, p.angle);
-      continue;
-    }
-
-    // ── Hellfire mutation: 8-bullet 360° ring replaces normal shot ───────────
-    if (s.upgradeStats.mutations?.hellfire) {
-      for (let hf = 0; hf < 8; hf++) {
-        const ha = (hf / 8) * Math.PI * 2;
-        s.bullets.push({ x: bx, y: by, vx: Math.cos(ha) * bSpeed * 0.8, vy: Math.sin(ha) * bSpeed * 0.8, life: 1.4, damage: bDmg * 0.65, crit: false, pierce });
-      }
-      spawnMuzzleFlash(s, bx, by, p.angle);
-      continue;
-    }
-
-    // ── Normal / spread shot ─────────────────────────────────────────────────
-    const totalSpread = Math.max(spreadCount, 1);
-    if (totalSpread > 1) {
-      const half = (totalSpread - 1) / 2;
-      for (let sc = 0; sc < totalSpread; sc++) {
-        const a = p.angle + (sc - half) * spreadAngle;
-        const isCrit = Math.random() < s.upgradeStats.critChance;
-        s.bullets.push({ x: bx, y: by, vx: Math.cos(a) * bSpeed, vy: Math.sin(a) * bSpeed, life: 1.8, damage: isCrit ? bDmg * critMult : bDmg, crit: isCrit, pierce });
-      }
-    } else {
-      const isCrit = Math.random() < s.upgradeStats.critChance;
-      s.bullets.push({ x: bx, y: by, vx: Math.cos(p.angle) * bSpeed, vy: Math.sin(p.angle) * bSpeed, life: 1.8, damage: isCrit ? bDmg * critMult : bDmg, crit: isCrit, pierce });
-    }
-    // Burst shot: extra tight-cluster bullets
-    const extra = s.upgradeStats.extraBullets || 0;
-    for (let eb = 0; eb < extra; eb++) {
-      const burstOffset = (eb % 2 === 0 ? 1 : -1) * (Math.ceil((eb + 1) / 2)) * 0.06;
-      const a = p.angle + burstOffset;
-      const isCrit = Math.random() < s.upgradeStats.critChance;
-      s.bullets.push({ x: bx, y: by, vx: Math.cos(a) * bSpeed, vy: Math.sin(a) * bSpeed, life: 1.8, damage: isCrit ? bDmg * critMult : bDmg, crit: isCrit, pierce });
-    }
-    // Flak burst: close-range shotgun pellets (short life, wide fan)
-    if (s.upgradeStats.hasFlakBurst) {
-      const pellets = 4 + s.upgradeStats.flakLevels;
-      for (let fp = 0; fp < pellets; fp++) {
-        const fa = p.angle + (fp - pellets / 2) * 0.18 + rand(-0.05, 0.05);
-        s.bullets.push({ x: bx, y: by, vx: Math.cos(fa) * bSpeed * 0.9, vy: Math.sin(fa) * bSpeed * 0.9, life: 0.28, damage: bDmg * 0.45, crit: false, pierce: 0 });
-      }
-    }
-    spawnMuzzleFlash(s, bx, by, p.angle);
+  // Helper to create one bullet from player position with optional offset
+  function pb(off, angleOffset, dmgMult, speedMult, life_, pierce_) {
+    const bx = p.x + Math.cos(perpAngle) * (off||0);
+    const by = p.y + Math.sin(perpAngle) * (off||0);
+    const a = p.angle + (angleOffset||0);
+    const sp = bSpeed * (speedMult||1);
+    const isCrit = Math.random() < critChance;
+    const dmg = bDmg * (dmgMult||1) * (isCrit ? critMult : 1);
+    spawnBulletRaw(s, bx, by, a, sp, dmg, isCrit, life_||1.8, pierce_??pierce);
+    spawnMuzzleFlash(s, bx, by, a);
   }
-  // Oil cost — blood pact triples it; overclock wildcards make every 5th free, 6th costs 6×
-  let bulletCost = OIL_COST_PER_BULLET * (s.upgradeStats.bulletOilCostMult || 1);
+
+  // ── Mutations (override all weapon behaviour) ─────────────────────────────
+  if (s.upgradeStats.mutations?.minigun_mode) {
+    for (let mn = 0; mn < 5; mn++) {
+      const ma = p.angle + (mn - 2) * 0.04 + rand(-0.01, 0.01);
+      spawnBulletRaw(s, p.x, p.y, ma, bSpeed * 1.3, bDmg * 0.7, false, 1.6, pierce);
+    }
+    spawnMuzzleFlash(s, p.x, p.y, p.angle);
+    _applyBulletCost(s);
+    soundFn('shoot');
+    return;
+  }
+  if (s.upgradeStats.mutations?.hellfire) {
+    for (let hf = 0; hf < 8; hf++) {
+      const ha = (hf / 8) * Math.PI * 2;
+      spawnBulletRaw(s, p.x, p.y, ha, bSpeed * 0.8, bDmg * 0.65, false, 1.4, pierce);
+    }
+    spawnMuzzleFlash(s, p.x, p.y, p.angle);
+    _applyBulletCost(s);
+    soundFn('shoot');
+    return;
+  }
+
+  // ── Weapon dispatch ───────────────────────────────────────────────────────
+  const wl = (s.upgradeStats.weaponLevels?.[weapon] || 1); // weapon stack level
+
+  switch (weapon) {
+    case 'dual': {
+      // Two side-by-side bullets
+      pb(-8, 0, 1, 1); pb(8, 0, 1, 1);
+      // Extra bullets from burst_shot
+      for (let eb = 0; eb < (s.upgradeStats.extraBullets||0); eb++) {
+        const a = (eb % 2 === 0 ? 1 : -1) * (Math.ceil((eb+1)/2)) * 0.06;
+        pb(0, a, 0.8, 1);
+      }
+      break;
+    }
+    case 'triple': {
+      const angles = [-0.14, 0, 0.14];
+      for (const ao of angles) pb(0, ao, 1, 1);
+      for (let eb = 0; eb < (s.upgradeStats.extraBullets||0); eb++) {
+        const a = (eb % 2 === 0 ? 1 : -1) * 0.2;
+        pb(0, a, 0.7, 1);
+      }
+      break;
+    }
+    case 'shotgun': {
+      const pellets = 6 + Math.floor((wl - 1) / 3);
+      for (let fp = 0; fp < pellets; fp++) {
+        const fa = p.angle + (fp - (pellets-1)/2) * 0.20 + rand(-0.04, 0.04);
+        const bx2 = p.x + Math.cos(perpAngle) * rand(-4, 4);
+        const by2 = p.y + Math.sin(perpAngle) * rand(-4, 4);
+        spawnBulletRaw(s, bx2, by2, fa, bSpeed * 0.85, bDmg * 0.50, false, 0.45, 0);
+        spawnMuzzleFlash(s, bx2, by2, fa);
+      }
+      break;
+    }
+    case 'sniper': {
+      // Single, high-damage, always-piercing round
+      const isCrit = Math.random() < critChance;
+      spawnBulletRaw(s, p.x, p.y, p.angle, bSpeed * 2.2, bDmg * 3 * (isCrit ? critMult : 1), isCrit, 4.0, 999);
+      spawnMuzzleFlash(s, p.x, p.y, p.angle);
+      spawnMuzzleFlash(s, p.x, p.y, p.angle);
+      break;
+    }
+    case 'machinegun': {
+      // 8 rapid low-damage bullets in tight spread
+      const fireBonus = 1 + (wl - 1) * 0.06;
+      for (let mg = 0; mg < 8; mg++) {
+        const ma = p.angle + rand(-0.10, 0.10);
+        spawnBulletRaw(s, p.x, p.y, ma, bSpeed * 1.1, bDmg * 0.35, false, 1.5, 0);
+        spawnMuzzleFlash(s, p.x, p.y, ma);
+      }
+      break;
+    }
+    case 'rocket': {
+      // 3 rockets in fan with AoE explosion flag
+      for (let rk = 0; rk < 3; rk++) {
+        const ra = p.angle + (rk - 1) * 0.20;
+        const isCrit = Math.random() < critChance;
+        s.bullets.push({ x: p.x, y: p.y, vx: Math.cos(ra)*bSpeed*0.9, vy: Math.sin(ra)*bSpeed*0.9, life: 2.2, damage: bDmg*(isCrit?critMult:1), crit: isCrit, pierce: 0, isRocket: true, rocketRadius: 40 });
+        spawnMuzzleFlash(s, p.x, p.y, ra);
+      }
+      break;
+    }
+    case 'grenade': {
+      // Bouncing grenade
+      const bounces = 1 + Math.floor((wl - 1) / 3);
+      const isCrit = Math.random() < critChance;
+      s.bullets.push({ x: p.x, y: p.y, vx: Math.cos(p.angle)*bSpeed*0.65, vy: Math.sin(p.angle)*bSpeed*0.65, life: 3.0, damage: bDmg*1.5*(isCrit?critMult:1), crit: isCrit, pierce: 0, isGrenade: true, grenadeRadius: 60, bouncesLeft: bounces });
+      spawnMuzzleFlash(s, p.x, p.y, p.angle);
+      break;
+    }
+    case 'chain_gun': {
+      // Ultra-rapid tri-burst (3 bullets, grows with stacks)
+      const cgBullets = 3 + Math.floor((wl - 1) / 2);
+      for (let cg = 0; cg < cgBullets; cg++) {
+        const ca = p.angle + rand(-0.06, 0.06);
+        const isCrit = Math.random() < critChance;
+        spawnBulletRaw(s, p.x, p.y, ca, bSpeed * 1.2, bDmg * 0.30 * (isCrit ? critMult : 1), isCrit, 1.4, 0);
+        spawnMuzzleFlash(s, p.x, p.y, ca);
+      }
+      break;
+    }
+    case 'plasma': {
+      // Single slow heavy plasma ball with AoE on impact
+      const isCrit = Math.random() < critChance;
+      s.bullets.push({ x: p.x, y: p.y, vx: Math.cos(p.angle)*bSpeed*0.50, vy: Math.sin(p.angle)*bSpeed*0.50, life: 4.0, damage: bDmg*3.0*(isCrit?critMult:1), crit: isCrit, pierce: 0, isRocket: true, rocketRadius: 60 });
+      spawnMuzzleFlash(s, p.x, p.y, p.angle);
+      spawnMuzzleFlash(s, p.x, p.y, p.angle);
+      break;
+    }
+    case 'flak': {
+      // Wide spread pellet burst (8 base, grows with stacks)
+      const flakPellets = 8 + Math.floor((wl - 1) / 2) * 2;
+      const flakSpread = Math.PI * 0.55; // ~100 degree cone
+      for (let fl = 0; fl < flakPellets; fl++) {
+        const fa = p.angle + (fl - (flakPellets - 1) / 2) * (flakSpread / flakPellets) + rand(-0.04, 0.04);
+        const isCrit = Math.random() < critChance;
+        spawnBulletRaw(s, p.x, p.y, fa, bSpeed * 0.70, bDmg * 0.45 * (isCrit ? critMult : 1), isCrit, 0.36, 0);
+        spawnMuzzleFlash(s, p.x, p.y, fa);
+      }
+      break;
+    }
+    case 'laser_rifle': {
+      // Ultra-fast piercing laser beam — slow fire rate (handled by cooldownMult)
+      const laserPierce = 5 + (wl - 1);
+      const isCrit = Math.random() < critChance;
+      spawnBulletRaw(s, p.x, p.y, p.angle, bSpeed * 2.6, bDmg * 2.5 * (isCrit ? critMult : 1), isCrit, 3.5, laserPierce);
+      spawnMuzzleFlash(s, p.x, p.y, p.angle);
+      spawnMuzzleFlash(s, p.x, p.y, p.angle);
+      break;
+    }
+    default: {
+      // Default single cannon (+ spread_shot + burst_shot modifiers)
+      const spreadCount = s.upgradeStats.spreadCount || 1;
+      if (spreadCount > 1) {
+        const half = (spreadCount - 1) / 2;
+        for (let sc = 0; sc < spreadCount; sc++) {
+          const a = p.angle + (sc - half) * 0.12;
+          pb(0, sc === 0 ? 0 : a - p.angle, 1, 1);
+        }
+      } else {
+        pb(0, 0, 1, 1);
+      }
+      for (let eb = 0; eb < (s.upgradeStats.extraBullets||0); eb++) {
+        const ao = (eb % 2 === 0 ? 1 : -1) * (Math.ceil((eb+1)/2)) * 0.06;
+        pb(0, ao, 1, 1);
+      }
+      break;
+    }
+  }
+
+  // Flak burst: appended to any weapon
+  if (s.upgradeStats.hasFlakBurst) {
+    const pellets = 4 + Math.min(8, s.upgradeStats.flakLevels);
+    for (let fp = 0; fp < pellets; fp++) {
+      const fa = p.angle + (fp - pellets/2) * 0.18 + rand(-0.05, 0.05);
+      spawnBulletRaw(s, p.x, p.y, fa, bSpeed * 0.9, bDmg * 0.30, false, 0.25, 0);
+    }
+  }
+
+  _applyBulletCost(s);
+  soundFn('shoot');
+}
+
+/* Raw bullet spawner — handles volatile rounds, cursed mag, resonance */
+function spawnBulletRaw(s, x, y, a, sp, dmg, isCrit, life, pierce) {
+  // Cursed magazine (cycle shortens with stacks)
+  if (s.upgradeStats.cursedMagActive) {
+    s.upgradeStats.cursedMagCounter = ((s.upgradeStats.cursedMagCounter||0) + 1);
+    const cycle = s.upgradeStats.cursedMagCycle || 8;
+    const n = s.upgradeStats.cursedMagCounter % cycle;
+    if (n === cycle - 1) return; // 2nd-to-last shot = dud
+    if (n === 0) { dmg *= 5; isCrit = true; } // last-in-cycle = 5×
+  }
+  // Resonance burst
+  if (s.upgradeStats.resonanceReady) {
+    dmg *= 8;
+    s.upgradeStats.resonanceReady = false;
+    s.upgradeStats.resonanceKills = 0;
+  }
+  s.bullets.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life, damage: dmg, crit: isCrit, pierce,
+    volatile: s.upgradeStats.volatileActive ? { chance: s.upgradeStats.volatileChance||0.10, radius: 25 } : null });
+}
+
+/** Calculate weapon cost based on bullet count and damage multiplier.
+    Base = 1 oil per bullet. */
+function getWeaponBulletCost(s) {
+  const weapon = s.upgradeStats.activeWeapon || 'default';
+  const wl = (s.upgradeStats.weaponLevels?.[weapon] || 1);
+  let bulletCount = 1;
+  let damageMult = 1;
+
+  switch (weapon) {
+    case 'dual':
+      bulletCount = 2;
+      damageMult = 1.0;
+      break;
+    case 'triple':
+      bulletCount = 3;
+      damageMult = 1.0;
+      break;
+    case 'shotgun':
+      bulletCount = 6 + Math.floor((wl - 1) / 3);
+      damageMult = 0.50;
+      break;
+    case 'sniper':
+      bulletCount = 1;
+      damageMult = 3.0;
+      break;
+    case 'machinegun':
+      bulletCount = 8;
+      damageMult = 0.35;
+      break;
+    case 'rocket':
+      bulletCount = 3;
+      damageMult = 1.0;
+      break;
+    case 'grenade':
+      bulletCount = 1;
+      damageMult = 1.5;
+      break;
+    case 'chain_gun':
+      bulletCount = 3 + Math.floor((wl - 1) / 2);
+      damageMult = 0.30;
+      break;
+    case 'plasma':
+      bulletCount = 1;
+      damageMult = 3.0;
+      break;
+    case 'flak':
+      bulletCount = 8 + Math.floor((wl - 1) / 2) * 2;
+      damageMult = 0.45;
+      break;
+    case 'laser_rifle':
+      bulletCount = 1;
+      damageMult = 2.5;
+      break;
+    case 'default':
+    default:
+      bulletCount = 1;
+      damageMult = 1.0;
+      break;
+  }
+
+  // Cost = bullet count × damage multiplier × base cost per bullet
+  const baseCost = bulletCount * damageMult * 0.1; // 0.1 oil per bullet base
+  return baseCost * (s.upgradeStats.bulletOilCostMult || 1);
+}
+
+function _applyBulletCost(s) {
+  let bulletCost = getWeaponBulletCost(s);
+
   if (s.upgradeStats.hasWildOverclock) {
     s.upgradeStats.overclockBulletCount = (s.upgradeStats.overclockBulletCount || 0) + 1;
-    const n = s.upgradeStats.overclockBulletCount % 6;
-    if (n === 5) bulletCost = 0;                       // 5th shot: free
-    else if (n === 0) bulletCost = OIL_COST_PER_BULLET * 6; // 6th shot: 6× cost
+    const period = s.upgradeStats.overclockFreePeriod || 5;
+    const n = s.upgradeStats.overclockBulletCount % (period + 1);
+    if (n === period) bulletCost = 0;
+    else if (n === 0) bulletCost = getWeaponBulletCost(s) * (period + 1);
   }
-  p.oil = Math.max(0, p.oil - bulletCost);
-  soundFn('shoot');
+  s.player.oil = Math.max(0, s.player.oil - bulletCost);
+
+  // Oil Junkie: tank drains faster per shot (scales with stacks)
+  if (s.upgradeStats.oilJunkieActive) {
+    s.player.oil = Math.max(0, s.player.oil - (s.upgradeStats.oilJunkieDrain || 0.15));
+  }
+}
+
+
+function updateCompanions(s, dt, p, soundFn) {
+  const us = s.upgradeStats;
+  const offline = p.oil <= 0; // companions go offline when out of oil
+
+  // Combined total for orbit angle spacing
+  const total = (us.scoutDrones||0) + (us.combatDrones||0) + (us.shieldDrones||0) + (us.repairDrones||0) + (us.bomberDrones||0);
+  if (total === 0) return;
+
+  let idx = 0;
+
+  // Scout drones — fast orbiters, 15 dmg, 280px range
+  for (let i = 0; i < (us.scoutDrones||0); i++) {
+    if (offline) { idx++; continue; }
+    const oa = s.time * 3.0 + (idx / total) * Math.PI * 2;
+    const ox = p.x + Math.cos(oa) * 55;
+    const oy = p.y + Math.sin(oa) * 55;
+    if (Math.random() < dt * 2.5) {
+      const target = findNearestEnemy(s, { x: ox, y: oy });
+      if (target && dist({ x: ox, y: oy }, target) < 280) {
+        const ta = angle({ x: ox, y: oy }, target);
+        s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta)*9, vy: Math.sin(ta)*9, life: 1, damage: 15, crit: false, pierce: 0 });
+      }
+    }
+    idx++;
+  }
+
+  // Combat drones — homing shots, 30 dmg, 320px range
+  for (let i = 0; i < (us.combatDrones||0); i++) {
+    if (offline) { idx++; continue; }
+    const oa = s.time * 2.0 + (idx / total) * Math.PI * 2;
+    const ox = p.x + Math.cos(oa) * 60;
+    const oy = p.y + Math.sin(oa) * 60;
+    if (Math.random() < dt * 1.0) {
+      const target = findNearestEnemy(s, { x: ox, y: oy });
+      if (target && dist({ x: ox, y: oy }, target) < 320) {
+        s.homingMissiles.push({ x: ox, y: oy, angle: angle({ x: ox, y: oy }, target),
+          speed: HOMING_SPEED * 1.2, target, life: 2, damage: 30 });
+      }
+    }
+    idx++;
+  }
+
+  // Shield drones — absorb hits, one per drone with 8s cooldown
+  for (let i = 0; i < (us.shieldDrones||0); i++) {
+    if (offline) { idx++; continue; }
+    if (!us.companionShieldTimers) us.companionShieldTimers = [];
+    if (us.companionShieldTimers[i] === undefined) us.companionShieldTimers[i] = 0;
+    us.companionShieldTimers[i] = Math.max(0, (us.companionShieldTimers[i]||0) - dt);
+    // shield drones mark as available via flag checked in damagePlayer
+    idx++;
+  }
+
+  // Repair drones — passive regen already handled via regenRate in resetUpgrades
+  for (let i = 0; i < (us.repairDrones||0); i++) { idx++; }
+
+  // Bomber drones — drop AoE bombs on targets
+  for (let i = 0; i < (us.bomberDrones||0); i++) {
+    if (offline) { idx++; continue; }
+    if (!us.bomberDroneTimers) us.bomberDroneTimers = [];
+    if (us.bomberDroneTimers[i] === undefined) us.bomberDroneTimers[i] = 0;
+    us.bomberDroneTimers[i] = (us.bomberDroneTimers[i]||0) - dt;
+    if (us.bomberDroneTimers[i] <= 0) {
+      const oa = s.time * 1.5 + (idx / total) * Math.PI * 2;
+      const ox = p.x + Math.cos(oa) * 70;
+      const oy = p.y + Math.sin(oa) * 70;
+      const target = findNearestEnemy(s, { x: ox, y: oy });
+      if (target && dist({ x: ox, y: oy }, target) < 350) {
+        // Drop bomb — stored as a special bullet with isRocket flag for AoE
+        s.bullets.push({ x: ox, y: oy, vx: Math.cos(angle({ x: ox, y: oy }, target))*3, vy: Math.sin(angle({ x: ox, y: oy }, target))*3, life: 1.5, damage: 40, crit: false, pierce: 0, isRocket: true, rocketRadius: 60 });
+      }
+      us.bomberDroneTimers[i] = 3.5; // fires every 3.5s
+    }
+    idx++;
+  }
 }
 
 export function findNearestEnemy(s, from) {
@@ -409,16 +738,20 @@ export function findNearestEnemy(s, from) {
 
 function fireHoming(s, soundFn) {
   const p = s.player;
-  if (p.oil < HOMING_THRESHOLD) return false;
+  if (p.oil < OIL_COST_PER_MISSILE) return false;
   const target = findNearestEnemy(s, p);
   if (!target) return false;
   const isWarhead = s.upgradeStats.hasWarhead;
+  const isMissileWeapon = s.upgradeStats.activeWeapon === 'missile';
+  const wl = isMissileWeapon ? (s.upgradeStats.weaponLevels?.missile || 1) : 1;
+  const weaponDmgBonus = isMissileWeapon ? 1 + (wl - 1) * 0.10 : 1;
+  const baseDmg = isWarhead ? 240 : 80;
   s.homingMissiles.push({
     x: p.x, y: p.y, angle: p.angle,
-    speed: (isWarhead ? HOMING_SPEED * 0.55 : HOMING_SPEED) * s.upgradeStats.missileSpeedMult,
+    speed: (isWarhead ? HOMING_SPEED * 0.55 : HOMING_SPEED) * (s.upgradeStats.missileSpeedMult || 1),
     target,
     life: isWarhead ? 6 : 4,
-    damage: (isWarhead ? 240 : 80) * s.upgradeStats.missileDmgMult,
+    damage: baseDmg * (s.upgradeStats.missileDmgMult || 1) * weaponDmgBonus,
     isWarhead,
   });
   p.oil = Math.max(0, p.oil - OIL_COST_PER_MISSILE);

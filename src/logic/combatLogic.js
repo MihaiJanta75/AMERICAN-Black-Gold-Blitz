@@ -11,7 +11,6 @@ import {
   EVENT_INTERVAL, GEYSER_DURATION, GEYSER_OIL_RATE, GEYSER_RADIUS,
   SUPPLY_DROP_DURATION, SUPPLY_DROP_COLLECT_RADIUS,
   BLACKOUT_STORM_DURATION, SECTOR_ASSAULT_DURATION,
-  NIGHT_CYCLE_INTERVAL, NIGHT_DURATION,
   MILESTONE_INTERVAL,
   RIG_DEPLETED_FADE, RIG_BURNOUT_FADE, RIG_BURNOUT_OIL_MIN, RIG_BURNOUT_OIL_MAX,
   RIG_SPAWN_INTERVAL, AI_UPGRADE_INTERVAL, OIL_OVERFLOW_DRAIN,
@@ -75,6 +74,28 @@ export function damagePlayer(s, amount, soundFn) {
   if (p.rampageActive) {
     p.rampageActive = false;
     spawnFloatingText(s, p.x, p.y - 30, 'RAMPAGE BROKEN!', '#ff6600', 14);
+  }
+
+  // Resonance resets on taking damage
+  if (s.upgradeStats.resonanceActive && (s.upgradeStats.resonanceKills || 0) > 0) {
+    s.upgradeStats.resonanceKills = 0;
+    s.upgradeStats.resonanceReady = false;
+  }
+
+  // Glass Blade: body contact deals 3× damage (flagged by enemy type = 'body')
+  // Handled at call site in combatLogic collision detection
+
+  // Shield drone: absorb the next hit
+  if ((s.upgradeStats.shieldDrones || 0) > 0 && s.upgradeStats.companionShieldTimers) {
+    for (let si = 0; si < s.upgradeStats.shieldDrones; si++) {
+      if ((s.upgradeStats.companionShieldTimers[si] || 0) <= 0) {
+        s.upgradeStats.companionShieldTimers[si] = 8.0; // reset cooldown
+        spawnFloatingText(s, p.x, p.y - 30, '🤖 SHIELD DRONE!', '#aa44ff', 13);
+        // cancel the damage already applied
+        p.oil = Math.min(getMaxOil(s), p.oil + actualDmg * critPenalty);
+        return;
+      }
+    }
   }
 
   // Adaptive plating synergy: blocked damage (reduction amount) heals player
@@ -223,7 +244,8 @@ export function updateCombat(s, dt, soundFn) {
     if (d < 28 && player.invincible <= 0 && e.subType !== 'kamikaze') {
       // Skip if shielded by shield drone (shield bubble absorbs collision)
       if (!e.shieldBubble) {
-        damagePlayer(s, e.damage, soundFn);
+        const glassMult = s.upgradeStats.glassBlade ? 3.0 : 1.0;
+        damagePlayer(s, e.damage * glassMult, soundFn);
       }
       e.hp -= getBodyDamage(s);
       if (e.hp > 0) spawnExplosion(s, e.x, e.y, (FACTIONS[e.faction] || FACTIONS.red).accent, 8);
@@ -238,7 +260,8 @@ export function updateCombat(s, dt, soundFn) {
     if (e.hp <= 0) continue;
     const d = dist(e, player);
     if (d < 40 && player.invincible <= 0) {
-      damagePlayer(s, e.damage * 0.6, soundFn);
+      const glassMult = s.upgradeStats.glassBlade ? 3.0 : 1.0;
+      damagePlayer(s, e.damage * 0.6 * glassMult, soundFn);
       // Push enemy away so it doesn't keep clipping
       const pushA = Math.atan2(e.y - player.y, e.x - player.x);
       e.x += Math.cos(pushA) * 20;
@@ -368,8 +391,17 @@ export function updateCombat(s, dt, soundFn) {
     });
     const xpGain = Math.floor((e.scoreValue * 0.5 + (e.isBoss ? 100 : 0)) * s.upgradeStats.xpMult);
     addXP(s, xpGain, soundFn);
-    // Economy rework: less oil per kill, more from rigs
-    player.oil = Math.min(getMaxOil(s), player.oil + OIL_KILL_DROP * s.upgradeStats.oilMult);
+    // Scavenger: +300% kill oil; otherwise normal kill drop
+    const killOilMult = s.upgradeStats.scavengerMode ? (s.upgradeStats.scavengerMult || 4.0) : 1.0;
+    player.oil = Math.min(getMaxOil(s), player.oil + OIL_KILL_DROP * s.upgradeStats.oilMult * killOilMult);
+    // Resonance: count kills without taking damage
+    if (s.upgradeStats.resonanceActive && !s.upgradeStats.resonanceReady) {
+      s.upgradeStats.resonanceKills = (s.upgradeStats.resonanceKills || 0) + 1;
+      if (s.upgradeStats.resonanceKills >= (s.upgradeStats.resonanceKillsRequired || 5)) {
+        s.upgradeStats.resonanceReady = true;
+        spawnFloatingText(s, player.x, player.y - 50, '⚡ RESONANCE READY!', '#44ffcc', 16);
+      }
+    }
     spawnFloatingText(s, e.x, e.y - 20, '+' + gained, isBountyKill || isRevengeKill ? '#ffaa00' : '#ffcc00');
     spawnLoot(s, e.x, e.y, e);
     addShake(s, e.isBoss ? 8 : 3, true);
@@ -454,8 +486,35 @@ export function updateCombat(s, dt, soundFn) {
   for (let i = s.bullets.length - 1; i >= 0; i--) {
     const b = s.bullets[i];
     b.x += b.vx; b.y += b.vy; b.life -= dt;
+
+    // Grenade bounce on world edges
+    if (b.isGrenade) {
+      if (b.x < 0 || b.x > WORLD_W) {
+        b.vx = -b.vx * 0.75;
+        b.x = b.x < 0 ? 1 : WORLD_W - 1;
+        b.bouncesLeft = (b.bouncesLeft || 0) - 1;
+      }
+      if (b.y < 0 || b.y > WORLD_H) {
+        b.vy = -b.vy * 0.75;
+        b.y = b.y < 0 ? 1 : WORLD_H - 1;
+        b.bouncesLeft = (b.bouncesLeft || 0) - 1;
+      }
+      if ((b.bouncesLeft || 0) < 0) { s.bullets.splice(i, 1); continue; }
+    }
+
     if (b.life <= 0 || b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H) {
       s.bullets.splice(i, 1); continue;
+    }
+
+    // Volatile: 10% chance per frame to explode, dealing AoE
+    if (b.volatile && Math.random() < 0.003) {
+      const vR = 25;
+      for (const ve of s.enemies) {
+        if (dist(b, ve) < vR) ve.hp -= b.damage * 0.4;
+      }
+      spawnExplosion(s, b.x, b.y, '#ff6600', 4);
+      // Volatile can hit player if close
+      if (dist(b, player) < vR * 0.6 && player.invincible <= 0) damagePlayer(s, b.damage * 0.25, soundFn);
     }
     let hitSomething = false;
     for (let j = s.enemies.length - 1; j >= 0; j--) {
@@ -482,6 +541,25 @@ export function updateCombat(s, dt, soundFn) {
         e.hp -= hitDmg;
         s.totalDamageDealt += hitDmg;
         onEnemyHit(s, e);
+
+        // Rocket / Grenade AoE on impact
+        if (b.isRocket || b.isGrenade) {
+          const aoeR = b.isGrenade ? (b.grenadeRadius || 60) : (b.rocketRadius || 40);
+          const aoeColor = b.isGrenade ? '#ff4400' : '#ff8800';
+          for (const ae of s.enemies) {
+            if (ae === e) continue;
+            if (dist(b, ae) < aoeR) {
+              ae.hp -= hitDmg * 0.6;
+              s.totalDamageDealt += hitDmg * 0.6;
+            }
+          }
+          spawnExplosion(s, b.x, b.y, aoeColor, 8);
+          addShake(s, b.isGrenade ? 4 : 3);
+          // AoE can splash the player too
+          if (dist(b, player) < aoeR * 0.5 && player.invincible <= 0) damagePlayer(s, hitDmg * 0.3, soundFn);
+          s.bullets.splice(i, 1); hitSomething = true;
+          break;
+        }
 
         // War Machine synergy: burst bullets shred armor
         if (s.upgradeStats.hasWarMachine && b.isBurst) {
@@ -681,26 +759,6 @@ export function updateEvents(s, dt, soundFn) {
     }
   }
 
-  // Night cycle
-  if (!s.nightMode) {
-    s.nightCycleTimer -= dt;
-    s.nightAlpha = Math.max(0, s.nightAlpha - dt * 0.8);
-    if (s.nightCycleTimer <= 0) {
-      s.nightMode = true;
-      s.nightDuration = NIGHT_DURATION;
-      spawnFloatingText(s, s.player.x, s.player.y - 80, '🌙 NIGHT FALLS', '#8866ff', 18);
-      addScreenFlash(s, '#220044', 0.2);
-    }
-  } else {
-    s.nightDuration -= dt;
-    s.nightAlpha = Math.min(0.80, s.nightAlpha + dt * 0.5);
-    if (s.nightDuration <= 0) {
-      s.nightMode = false;
-      s.nightCycleTimer = NIGHT_CYCLE_INTERVAL;
-      spawnFloatingText(s, s.player.x, s.player.y - 80, '🌅 DAWN BREAKS', '#ffaa44', 16);
-    }
-  }
-
   // Dynamic game events
   if (s.activeEvent) {
     s.activeEvent.timer -= dt;
@@ -710,7 +768,7 @@ export function updateEvents(s, dt, soundFn) {
       ev.data.oilTimer -= dt;
       if (ev.data.oilTimer <= 0) {
         ev.data.oilTimer = GEYSER_OIL_RATE;
-        const oilAmt = Math.floor(rand(8, 18) * (s.milestoneUnlocks?.opportunist ? 1.4 : 1));
+        const oilAmt = Math.floor(rand(8, 18) * (s.milestoneUnlocks?.opportunist ? (s.upgradeStats.opportunistMult || 1.4) : 1));
         s.loot.push({
           color: '#222', glow: '#555', radius: 6, value: oilAmt, type: 'oil',
           x: ev.data.x + rand(-GEYSER_RADIUS * 0.5, GEYSER_RADIUS * 0.5),
@@ -723,7 +781,7 @@ export function updateEvents(s, dt, soundFn) {
     if (ev.type === 'supply_drop' && !ev.data.claimed) {
       if (dist(s.player, ev.data) < SUPPLY_DROP_COLLECT_RADIUS) {
         ev.data.claimed = true;
-        const oilBonus = Math.floor(25 * (s.milestoneUnlocks?.opportunist ? 1.4 : 1));
+        const oilBonus = Math.floor(25 * (s.milestoneUnlocks?.opportunist ? (s.upgradeStats.opportunistMult || 1.4) : 1));
         s.player.oil = Math.min(getMaxOil(s), s.player.oil + oilBonus);
         // Add a bounty card
         const pool = Object.keys(UPGRADES).filter(k => {
@@ -778,7 +836,7 @@ export function updateWrecks(s, dt, soundFn) {
     w.life -= dt;
     if (w.life <= 0) { s.wrecks.splice(i, 1); continue; }
     if (dist(w, s.player) < WRECK_COLLECT_RADIUS) {
-      const mult = s.milestoneUnlocks?.salvager ? 1.5 : 1.0;
+      const mult = s.milestoneUnlocks?.salvager ? (s.upgradeStats.salvagerMult || 1.5) : 1.0;
       const oilGain = Math.floor(w.oil * mult);
       s.player.oil = Math.min(getMaxOil(s), s.player.oil + oilGain);
       spawnFloatingText(s, w.x, w.y - 12, '+' + oilGain + ' SALVAGE', '#88aacc', 11);
@@ -816,7 +874,7 @@ export function updatePipelines(s, dt, soundFn) {
       continue;
     }
     // Apply income bonus
-    const mult = s.milestoneUnlocks?.pipeline_expert ? 3 : PIPELINE_INCOME_MULT;
+    const mult = s.milestoneUnlocks?.pipeline_expert ? (s.upgradeStats.pipelineIncomeMult || 3) : PIPELINE_INCOME_MULT;
     pipe.rigA.pipelineIncome = mult;
     pipe.rigB.pipelineIncome = mult;
   }
@@ -848,8 +906,14 @@ export function updateRigs(s, dt) {
     const prevCount = s.rigs.length;
     spawnRig(s);
     s.totalRigsSpawned = (s.totalRigsSpawned || 0) + 1;
-    // Interval tightens slightly over time (max spawn rate 35s at late game)
-    const baseInterval = Math.max(35, RIG_SPAWN_INTERVAL - s.timeSurvived * 0.04);
+    // Early game spawns faster (30-45s between rigs for first 60s), then normal progression
+    let baseInterval;
+    if (s.timeSurvived < 60) {
+      baseInterval = 35; // Fast spawn in early game (~35s between rigs)
+    } else {
+      // Normal progression: tightens slightly over time (max spawn rate 35s at late game)
+      baseInterval = Math.max(35, RIG_SPAWN_INTERVAL - s.timeSurvived * 0.04);
+    }
     s.nextRigSpawnTime = baseInterval + rand(-8, 12);
     // Announce and tag new rig
     const lastRig = s.rigs[s.rigs.length - 1];
@@ -975,7 +1039,7 @@ export function updateRigs(s, dt) {
 
     if (rig.owner === 'player') {
       const playerRigCount = s.rigs.filter(r => r.owner === 'player').length;
-      const warEcoMult = (s.milestoneUnlocks?.war_economy && playerRigCount >= 3) ? 1.3 : 1.0;
+      const warEcoMult = (s.milestoneUnlocks?.war_economy && playerRigCount >= 3) ? (1 + (s.upgradeStats.warEconomyBonus || 0.30)) : 1.0;
       const marketMult = s.oilMarket?.mult || 1.0;
       const pipeMult   = rig.pipelineIncome || 1.0;
       const networkBonus = s.upgradeStats.supplyNetworkBonus || 0;
@@ -983,9 +1047,12 @@ export function updateRigs(s, dt) {
       // Gold/cursed rig multipliers
       const specialMult = rig.rigType === 'gold' ? GOLD_RIG_INCOME_MULT :
                           rig.rigType === 'cursed' ? CURSED_RIG_INCOME_MULT : 1.0;
-      const magnate = s.upgradeStats.hasOilMagnate ? 2.0 : 1.0;
-      const incomeRate = (OIL_PER_SECOND * s.upgradeStats.oilMult * warEcoMult * marketMult * pipeMult + networkBonus) * clusterMult * specialMult * magnate;
-      player.oil = Math.min(getMaxOil(s), player.oil + incomeRate * dt);
+      const magnate = s.upgradeStats.hasOilMagnate ? (s.upgradeStats.oilMagnateBonus || 2.0) : 1.0;
+      const scavengerMult = s.upgradeStats.scavengerMode ? 0.60 : 1.0;
+      const incomeRate = (OIL_PER_SECOND * s.upgradeStats.oilMult * warEcoMult * marketMult * pipeMult + networkBonus) * clusterMult * specialMult * magnate * scavengerMult;
+      if (!s.upgradeStats.deathWishBlocking) {
+        player.oil = Math.min(getMaxOil(s), player.oil + incomeRate * dt);
+      }
       oilIncome += incomeRate;
       rig.hp = Math.min(rig.maxHp, rig.hp + 3 * dt);
 
@@ -1006,6 +1073,31 @@ export function updateRigs(s, dt) {
   const maxOil = getMaxOil(s);
   if (player.oil >= maxOil) {
     player.oil = Math.max(maxOil - OIL_OVERFLOW_DRAIN * dt, maxOil * 0.98);
+  }
+
+  // Companion oil drain
+  if ((s.upgradeStats.companionOilDrain || 0) > 0 && player.oil > 0) {
+    player.oil = Math.max(0, player.oil - s.upgradeStats.companionOilDrain * dt);
+  }
+
+  // Chaos card drains
+  if ((s.upgradeStats.bloodTitheDrain || 0) > 0) {
+    player.oil = Math.max(0, player.oil - s.upgradeStats.bloodTitheDrain * dt);
+  }
+
+  // Oil Junkie: tank drains 15% faster (applied per-second on top of normal drain)
+  if (s.upgradeStats.oilJunkieActive) {
+    player.oil = Math.max(0, player.oil - maxOil * 0.15 * dt / 60);
+  }
+
+  // Death Wish: block rig income when active and below 20% oil
+  if (s.upgradeStats.deathWishActive) {
+    const deathWishOn = player.oil / maxOil < 0.20;
+    s.upgradeStats.deathWishBlocking = deathWishOn;
+    if (deathWishOn) {
+      // Invincible while active
+      player.invincible = Math.max(player.invincible, 0.1);
+    }
   }
 }
 

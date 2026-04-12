@@ -93,6 +93,69 @@ export function drawOrbitals(ctx, s) {
   }
 }
 
+export function drawCompanions(ctx, s) {
+  const us = s.upgradeStats;
+  if (!us) return;
+  const px = s.player.x, py = s.player.y;
+  const t = s.time;
+  const oilOk = s.player.oil > 0;
+
+  const COMPANION_TYPES = [
+    { key: 'scoutDrones',   count: us.scoutDrones   || 0, color: '#44ddff', innerColor: '#aaeeff', radius: 52, speed: 2.8, size: 6  },
+    { key: 'combatDrones',  count: us.combatDrones  || 0, color: '#ff4444', innerColor: '#ff9988', radius: 62, speed: 2.2, size: 7  },
+    { key: 'shieldDrones',  count: us.shieldDrones  || 0, color: '#8844ff', innerColor: '#cc99ff', radius: 30, speed: 3.5, size: 6  },
+    { key: 'repairDrones',  count: us.repairDrones  || 0, color: '#44ff88', innerColor: '#aaffcc', radius: 48, speed: 2.6, size: 6  },
+    { key: 'bomberDrones',  count: us.bomberDrones  || 0, color: '#ff8800', innerColor: '#ffcc44', radius: 70, speed: 1.8, size: 8  },
+  ];
+
+  // Compute a global slot offset so different companion types orbit at different angles
+  let slotBase = 0;
+  for (const cfg of COMPANION_TYPES) {
+    if (cfg.count <= 0) { slotBase += 3; continue; }
+
+    for (let i = 0; i < cfg.count; i++) {
+      const angleOffset = (slotBase + i) * (Math.PI * 2 / Math.max(cfg.count, 1));
+      const oa = t * cfg.speed + angleOffset;
+      const ox = px + Math.cos(oa) * cfg.radius;
+      const oy = py + Math.sin(oa) * cfg.radius;
+
+      const alpha = oilOk ? 1.0 : 0.25;
+
+      // Outer glow ring
+      ctx.globalAlpha = alpha * 0.18;
+      ctx.fillStyle = cfg.color;
+      ctx.beginPath(); ctx.arc(ox, oy, cfg.size + 5, 0, Math.PI * 2); ctx.fill();
+
+      // Body
+      ctx.globalAlpha = alpha * 0.85;
+      ctx.fillStyle = cfg.color;
+      ctx.beginPath(); ctx.arc(ox, oy, cfg.size, 0, Math.PI * 2); ctx.fill();
+
+      // Inner bright core
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = cfg.innerColor;
+      ctx.beginPath(); ctx.arc(ox, oy, cfg.size * 0.45, 0, Math.PI * 2); ctx.fill();
+
+      // Orbit trail
+      ctx.globalAlpha = alpha * 0.10;
+      ctx.strokeStyle = cfg.color;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(px, py, cfg.radius, 0, Math.PI * 2); ctx.stroke();
+
+      // Offline indicator
+      if (!oilOk) {
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = '#ff2200';
+        ctx.font = '9px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('⚠', ox, oy - cfg.size - 4);
+      }
+    }
+    slotBase += cfg.count + 1;
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'center';
+}
+
 export function drawShadows(ctx, s) {
   ctx.globalAlpha = 0.12; ctx.fillStyle = '#000';
   if (s.player.alive) { ctx.beginPath(); ctx.ellipse(s.player.x + 6, s.player.y + 10, 18, 10, 0.2, 0, Math.PI * 2); ctx.fill(); }

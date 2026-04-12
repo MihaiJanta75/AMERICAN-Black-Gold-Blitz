@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/AMERICAN-Black-Gold-Blitz/',
+  base: './',
   build: {
     outDir: 'dist',
     assetsInlineLimit: 0,

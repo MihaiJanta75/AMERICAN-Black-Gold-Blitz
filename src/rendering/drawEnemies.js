@@ -3,7 +3,7 @@ import { COMMANDER_BUFF_RADIUS } from '../constants.js';
 import { rand } from '../utils.js';
 
 export function drawEnemies(ctx, s) {
-  const { time, nightMode, nightAlpha } = s;
+  const { time } = s;
 
   for (const e of s.enemies) {
     const f = FACTIONS[e.faction] || FACTIONS.red;
@@ -88,6 +88,14 @@ export function drawEnemies(ctx, s) {
       ctx.globalAlpha = 1; ctx.restore();
     }
 
+    // Stealth Infiltrator: semi-transparent (40% alpha) until within 100px of player/rig
+    if (e.subType === 'stealth_infiltrator') {
+      const distToPlayer = Math.hypot(e.x - s.player.x, e.y - s.player.y);
+      const distToTarget = e.targetRig ? Math.hypot(e.x - e.targetRig.x, e.y - e.targetRig.y) : 9999;
+      const isClose = distToPlayer < 100 || distToTarget < 100;
+      ctx.globalAlpha = isClose ? (0.7 + Math.sin(time * 6) * 0.15) : 0.30;
+    }
+
     // Ghost elite: near-invisible when not firing
     if (e.isGhostElite && !e.ghostVisible) {
       ctx.globalAlpha = 0.12 + Math.sin(time * 4) * 0.06;
@@ -129,20 +137,8 @@ export function drawEnemies(ctx, s) {
     else if (e.type === 'chopper') drawChopperE(ctx, e, f, time);
     else if (e.type === 'bomber')  drawBomberE(ctx, e, f, time);
 
-    // Reset ghost alpha
-    if (e.isGhostElite && !e.ghostVisible) ctx.globalAlpha = 1;
-
-    // Night mode: glowing eyes on all enemies
-    if (s.nightMode && s.nightAlpha > 0.3) {
-      const eyeAlpha = Math.min(0.9, s.nightAlpha * 1.1) * (0.7 + Math.sin(time * 4) * 0.3);
-      ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle);
-      ctx.globalAlpha = eyeAlpha;
-      ctx.fillStyle = e.isBoss ? '#ff2200' : (e.subType === 'command' ? '#ffcc00' : f.accent);
-      const eyeOffset = e.radius * 0.35;
-      ctx.beginPath(); ctx.arc(eyeOffset, -3, 2.5, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(eyeOffset, 3, 2.5, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1; ctx.restore();
-    }
+    // Reset stealth / ghost alpha
+    if (e.subType === 'stealth_infiltrator' || (e.isGhostElite && !e.ghostVisible)) ctx.globalAlpha = 1;
 
     // HP bar — always visible for commanders and bosses
     if (e.hp < e.maxHp || e.subType === 'command' || e.isBoss) {
@@ -308,8 +304,40 @@ function drawPlaneE(ctx, e, f, time) {
   ctx.restore();
 }
 
-/* ===== CHOPPER (normal + command) ===== */
+/* ===== CHOPPER (normal + command + heavy_gunship) ===== */
 function drawChopperE(ctx, e, f, time) {
+  if (e.subType === 'heavy_gunship') {
+    // Heavy Gunship: large angular hull, twin gun pods, armored look
+    const scale = 1.4;
+    ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle); ctx.scale(scale, scale);
+    // Hull — wide flat body
+    ctx.fillStyle = '#2a2a2a';
+    ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(8, -12); ctx.lineTo(-14, -10); ctx.lineTo(-18, 0); ctx.lineTo(-14, 10); ctx.lineTo(8, 12); ctx.closePath(); ctx.fill();
+    // Armour plating stripe
+    ctx.fillStyle = '#444'; ctx.fillRect(-12, -6, 20, 12);
+    // Gun pods
+    ctx.fillStyle = '#333'; ctx.fillRect(6, -14, 12, 5); ctx.fillRect(6, 9, 12, 5);
+    ctx.fillStyle = '#555'; ctx.fillRect(16, -13, 6, 3); ctx.fillRect(16, 10, 6, 3);
+    // Cockpit
+    ctx.fillStyle = '#ff6622'; ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.ellipse(8, 0, 5, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+    // Danger stripes
+    ctx.fillStyle = '#ff4400'; ctx.globalAlpha = 0.4;
+    ctx.fillRect(-14, -10, 4, 20);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#cc3300'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(8, -12); ctx.lineTo(-14, -10); ctx.lineTo(-18, 0); ctx.lineTo(-14, 10); ctx.lineTo(8, 12); ctx.closePath(); ctx.stroke();
+    ctx.restore();
+    // Slow rotor
+    ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.rotorAngle || 0);
+    ctx.globalAlpha = 0.05; ctx.fillStyle = '#ff6600'; ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.45; ctx.strokeStyle = '#cc4400'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(-26, 0); ctx.lineTo(26, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -26); ctx.lineTo(0, 26); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.fillStyle = '#555'; ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    return;
+  }
+
   const scale = e.isBoss ? 1.5 : (e.subType === 'command' ? 1.2 : 1);
   ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.angle); ctx.scale(scale, scale);
   ctx.fillStyle = f.dark; ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(-20, -1); ctx.lineTo(-20, 1); ctx.lineTo(-6, 2); ctx.closePath(); ctx.fill();

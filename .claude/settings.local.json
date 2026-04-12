@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npx playwright:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(wc:*)",
+      "Read(//c/Users/mihai/.claude/skills/webapp-testing/**)",
+      "Bash(python test_changes.py)"
     ]
   }
 }

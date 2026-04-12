@@ -1,11 +1,10 @@
 import {
   WORLD_W, MAX_LEVEL, WANTED_THRESHOLDS,
-  HOMING_THRESHOLD, DUAL_CANNON_THRESHOLD,
   DASH_COOLDOWN, COMBO_DECAY, STREAK_DECAY, RIG_COUNT, JOYSTICK_RADIUS,
   BLACK_HOLE_COOLDOWN, PIPELINE_BUILD_RADIUS,
 } from '../constants.js';
 import { getMaxOil, xpForLevel, hasPowerup, getPickupRadius } from '../state/GameState.js';
-import { FACTIONS, UPGRADES, LOOT_TYPES, MILESTONE_DEFS, AI_UPGRADE_DEFS } from '../config.js';
+import { FACTIONS, UPGRADES, LOOT_TYPES, AI_UPGRADE_DEFS } from '../config.js';
 import { clamp } from '../utils.js';
 
 export function drawHUD(ctx, s, settings) {
@@ -80,14 +79,22 @@ export function drawHUD(ctx, s, settings) {
   const xpNext = s.playerLevel >= MAX_LEVEL ? '—' : xpForLevel(s.playerLevel);
   ctx.fillText('LVL ' + s.playerLevel + (s.playerLevel >= MAX_LEVEL ? ' MAX' : ' · ' + s.playerXP + '/' + xpNext + ' XP'), pad + 4, xpBarY + 8);
 
-  // Weapons row
+  // Active weapon + companion status
   const wyBase = xpBarY + 18;
   let wy = wyBase;
   ctx.textAlign = 'left'; ctx.font = '11px monospace';
-  ctx.fillStyle = player.oil >= DUAL_CANNON_THRESHOLD ? '#44ff88' : '#555';
-  ctx.fillText('⚡ DUAL CANNONS' + (player.oil >= DUAL_CANNON_THRESHOLD ? ' ✓' : ' (' + DUAL_CANNON_THRESHOLD + ')'), pad, wy); wy += 14;
-  ctx.fillStyle = player.oil >= HOMING_THRESHOLD ? '#ff8844' : '#555';
-  ctx.fillText('🚀 MISSILES [E/RMB]' + (player.oil >= HOMING_THRESHOLD ? ' ✓' : ' (' + HOMING_THRESHOLD + ')'), pad, wy); wy += 14;
+  const activeWeapon = s.upgradeStats?.activeWeapon || 'default';
+  const weaponLvl = s.upgradeStats?.weaponLevels?.[activeWeapon] || 0;
+  const WEAPON_ICONS = { default: '🔫', dual: '🔫🔫', triple: '🔫🔫🔫', shotgun: '💥', sniper: '🎯', machinegun: '⚙️', missile: '🚀', rocket: '💣', grenade: '🧨' };
+  const wIcon = WEAPON_ICONS[activeWeapon] || '🔫';
+  ctx.fillStyle = '#ffcc44';
+  ctx.fillText(wIcon + ' ' + activeWeapon.toUpperCase() + (weaponLvl > 1 ? ' ×' + weaponLvl : ''), pad, wy); wy += 14;
+  // Companion drain indicator
+  const cDrain = s.upgradeStats?.companionOilDrain || 0;
+  if (cDrain > 0) {
+    ctx.fillStyle = player.oil > 0 ? '#44ddff' : '#ff4444';
+    ctx.fillText('🤖 DRONES  -' + cDrain.toFixed(1) + '/s', pad, wy); wy += 14;
+  }
   if (s.upgradeStats.hasBlackHole) {
     const bhReady = s.blackHoleCooldown <= 0 && player.oil >= BLACK_HOLE_COOLDOWN;
     ctx.fillStyle = bhReady ? '#8844ff' : '#554466';
@@ -229,23 +236,6 @@ export function drawHUD(ctx, s, settings) {
     ctx.fillText(alertText, W - pad, pad + 68);
   }
 
-  // Night mode indicator — prominent pulsing panel
-  if (s.nightMode) {
-    const nightLeft = Math.ceil(s.nightDuration || 0);
-    const pulse = 0.6 + Math.sin(time * 3) * 0.3;
-    const nightPanelW = 110, nightPanelH = 22;
-    const nightPanelX = W - pad - nightPanelW, nightPanelY = pad + 70;
-    ctx.fillStyle = 'rgba(20,10,50,' + (0.75 * pulse) + ')';
-    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(nightPanelX, nightPanelY, nightPanelW, nightPanelH, 5); ctx.fill(); }
-    else ctx.fillRect(nightPanelX, nightPanelY, nightPanelW, nightPanelH);
-    ctx.strokeStyle = 'rgba(136,102,255,' + pulse + ')'; ctx.lineWidth = 1.5;
-    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(nightPanelX, nightPanelY, nightPanelW, nightPanelH, 5); ctx.stroke(); }
-    else ctx.strokeRect(nightPanelX, nightPanelY, nightPanelW, nightPanelH);
-    ctx.textAlign = 'center'; ctx.font = 'bold 11px monospace';
-    ctx.fillStyle = 'rgba(180,140,255,' + pulse + ')';
-    ctx.fillText('🌙 NIGHT ' + nightLeft + 's', nightPanelX + nightPanelW / 2, nightPanelY + 15);
-  }
-
   // Active event banner (center, below combo)
   if (s.activeEvent) {
     const ev = s.activeEvent;
@@ -274,17 +264,6 @@ export function drawHUD(ctx, s, settings) {
     ctx.textAlign = 'right'; ctx.font = '12px monospace';
     if (player.shieldActive) { ctx.fillStyle = '#aa44ff'; ctx.fillText('SHIELD READY', W - pad, H - 60); }
     else { ctx.fillStyle = '#555'; ctx.fillText('SHIELD ' + Math.ceil(player.shieldTimer) + 's', W - pad, H - 60); }
-  }
-
-  // Milestone unlocks row (compact, below minimap)
-  const unlockedMilestones = Object.keys(s.milestoneUnlocks || {});
-  if (unlockedMilestones.length > 0) {
-    ctx.textAlign = 'right'; ctx.font = '9px monospace'; ctx.fillStyle = '#888';
-    const icons = unlockedMilestones.map(k => {
-      const def = MILESTONE_DEFS.find(m => m.key === k);
-      return def ? def.icon : '●';
-    }).join(' ');
-    ctx.fillText(icons, W - pad, H - 82);
   }
 
   // Minimap
@@ -502,37 +481,6 @@ export function drawTouchControls(ctx, s, settings, isTouchDevice) {
 
 export function drawScreenEffects(ctx, s) {
   const { W, H, time, player } = s;
-
-  // Night mode darkness overlay with spotlight
-  if (s.nightAlpha > 0.01) {
-    const nAlpha = s.nightAlpha;
-    // Dark base layer — lighter so the game remains playable
-    ctx.fillStyle = 'rgba(0,0,18,' + (nAlpha * 0.55) + ')';
-    ctx.fillRect(0, 0, W, H);
-
-    // Stars — deterministic twinkling field
-    for (let si = 0; si < 60; si++) {
-      const sx = (Math.sin(si * 137.508) * 0.5 + 0.5) * W;
-      const sy = (Math.cos(si * 97.314) * 0.5 + 0.5) * H;
-      const sr = 0.7 + (si % 3) * 0.35;
-      const twinkle = 0.3 + Math.sin(time * 1.2 + si * 0.85) * 0.3;
-      ctx.globalAlpha = nAlpha * twinkle * 0.55;
-      ctx.fillStyle = si % 5 === 0 ? '#aaccff' : '#ffffff';
-      ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-
-    // Wide soft vignette — visible periphery but darker edges
-    const px = player.x - s.camera.x;
-    const py = player.y - s.camera.y;
-    const spotR = 220 + Math.sin(time * 0.8) * 12;
-    const spotGrad = ctx.createRadialGradient(px, py, spotR * 0.4, px, py, spotR * 1.8);
-    spotGrad.addColorStop(0, 'rgba(0,0,0,0)');
-    spotGrad.addColorStop(0.6, 'rgba(0,0,18,' + (nAlpha * 0.35) + ')');
-    spotGrad.addColorStop(1, 'rgba(0,0,18,' + (nAlpha * 0.72) + ')');
-    ctx.fillStyle = spotGrad;
-    ctx.fillRect(0, 0, W, H);
-  }
 
   if (s.screenFlash.alpha > 0.01) {
     ctx.globalAlpha = s.screenFlash.alpha;

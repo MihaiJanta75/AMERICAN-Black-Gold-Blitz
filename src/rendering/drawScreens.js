@@ -136,42 +136,54 @@ export function drawUpgradeScreen(ctx, s) {
   ctx.textAlign = 'center';
 
   // Header
-  ctx.fillStyle = '#ffcc00'; ctx.font = 'bold ' + Math.min(28, W * 0.048) + 'px monospace';
-  ctx.fillText('LEVEL ' + s.playerLevel + ' — CHOOSE YOUR UPGRADE', W / 2, H * 0.08);
+  ctx.fillStyle = '#ffcc00'; ctx.font = 'bold ' + Math.min(26, W * 0.044) + 'px monospace';
+  ctx.fillText('LEVEL ' + s.playerLevel + ' — PICK A CARD', W / 2, H * 0.07);
 
   const oilDisplay = Math.floor(s.player.oil);
   const oilColor = oilDisplay >= 120 ? '#44ff88' : oilDisplay >= 50 ? '#ffcc44' : '#ff4444';
-  ctx.fillStyle = oilColor; ctx.font = 'bold ' + Math.min(14, W * 0.025) + 'px monospace';
-  ctx.fillText('⛽ ' + oilDisplay + ' OIL AVAILABLE', W / 2, H * 0.13);
+  ctx.fillStyle = oilColor; ctx.font = 'bold ' + Math.min(13, W * 0.022) + 'px monospace';
+  ctx.fillText('⛽ ' + oilDisplay + ' OIL', W / 2, H * 0.115);
 
   const choices = s.upgradeChoices;
+  // Separate weapon card from stat/effect cards
+  const weaponKey = choices.find(k => k && UPGRADES[k]?.category === 'weapon');
   const synergyKey = choices.find(k => k && UPGRADES[k]?.synergy);
   const mutationKey = choices.find(k => k && MUTATIONS[k]);
-  const regularChoices = choices.filter(k => k && !UPGRADES[k]?.synergy && !MUTATIONS[k]);
-  const hasSpecial = synergyKey || mutationKey;
+  const statChoices = choices.filter(k => k && UPGRADES[k]?.category !== 'weapon' && !UPGRADES[k]?.synergy && !MUTATIONS[k]);
 
-  // Large portrait cards
-  const cardW = Math.min(Math.floor(W * 0.28), 260);
-  const cardH = Math.min(Math.floor(H * 0.62), 480);
-  const gap = Math.max(10, Math.floor(W * 0.022));
-  const totalW = regularChoices.length * cardW + (regularChoices.length - 1) * gap;
+  // 4-card layout: 3 stat cards + 1 weapon card (slightly narrower each)
+  const cardCount = statChoices.length + (weaponKey ? 1 : 0);
+  const cardW = Math.min(Math.floor(W * 0.22), 210);
+  const cardH = Math.min(Math.floor(H * 0.60), 440);
+  const gap = Math.max(8, Math.floor(W * 0.016));
+  const totalW = cardCount * cardW + (cardCount - 1) * gap;
   const startX = (W - totalW) / 2;
-  const startY = hasSpecial ? H * 0.14 : H * 0.15;
+  const startY = H * 0.135;
 
-  for (let i = 0; i < regularChoices.length; i++) {
-    const key = regularChoices[i];
+  // Draw stat cards
+  for (let i = 0; i < statChoices.length; i++) {
+    const key = statChoices[i];
     if (!key || !UPGRADES[key]) continue;
     drawUpgradeCard(ctx, key, startX + i * (cardW + gap), startY, cardW, cardH, s, mouseX, mouseY, false, t);
   }
 
-  const synH = Math.min(100, H * 0.16);
-  let nextSpecialY = startY + cardH + 12;
+  // Draw weapon card — with golden border label
+  if (weaponKey && UPGRADES[weaponKey]) {
+    const wIdx = statChoices.length;
+    const wx = startX + wIdx * (cardW + gap);
+    ctx.fillStyle = '#ffaa00'; ctx.font = 'bold ' + Math.min(10, W * 0.018) + 'px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('⚔ WEAPON SLOT ⚔', wx + cardW / 2, startY - 10);
+    drawUpgradeCard(ctx, weaponKey, wx, startY, cardW, cardH, s, mouseX, mouseY, false, t, true);
+  }
+
+  const synH = Math.min(90, H * 0.14);
+  let nextSpecialY = startY + cardH + 14;
 
   // Synergy card
   if (synergyKey && UPGRADES[synergyKey]) {
     ctx.fillStyle = '#cc88ff'; ctx.font = 'bold ' + Math.min(11, W * 0.02) + 'px monospace'; ctx.textAlign = 'center';
     ctx.fillText('⬇ SYNERGY EVOLUTION ⬇', W / 2, nextSpecialY - 8);
-    const synW = Math.min(360, W * 0.52);
+    const synW = Math.min(340, W * 0.50);
     drawUpgradeCard(ctx, synergyKey, (W - synW) / 2, nextSpecialY, synW, synH, s, mouseX, mouseY, true, t);
     nextSpecialY += synH + 10;
   }
@@ -180,13 +192,13 @@ export function drawUpgradeScreen(ctx, s) {
   if (mutationKey && MUTATIONS[mutationKey]) {
     ctx.fillStyle = '#00ffcc'; ctx.font = 'bold ' + Math.min(11, W * 0.02) + 'px monospace'; ctx.textAlign = 'center';
     ctx.fillText('🧬 MUTATION READY 🧬', W / 2, nextSpecialY - 8);
-    const mutW = Math.min(360, W * 0.52);
+    const mutW = Math.min(340, W * 0.50);
     drawMutationCard(ctx, mutationKey, (W - mutW) / 2, nextSpecialY, mutW, synH, s, mouseX, mouseY);
   }
 
   // Skip button
-  const skipW = 180, skipH = 44;
-  const skipX = (W - skipW) / 2, skipY = H * 0.91;
+  const skipW = 180, skipH = 40;
+  const skipX = (W - skipW) / 2, skipY = H * 0.92;
   const skipHover = mouseX >= skipX && mouseX <= skipX + skipW && mouseY >= skipY && mouseY <= skipY + skipH;
   ctx.fillStyle = skipHover ? 'rgba(80,60,20,0.9)' : 'rgba(30,20,10,0.75)';
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(skipX, skipY, skipW, skipH, 8); ctx.fill(); }
@@ -195,7 +207,7 @@ export function drawUpgradeScreen(ctx, s) {
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(skipX, skipY, skipW, skipH, 8); ctx.stroke(); }
   else ctx.strokeRect(skipX, skipY, skipW, skipH);
   ctx.fillStyle = skipHover ? '#ffcc66' : '#886644';
-  ctx.font = 'bold ' + Math.min(13, W * 0.024) + 'px monospace'; ctx.textAlign = 'center';
+  ctx.font = 'bold ' + Math.min(12, W * 0.022) + 'px monospace'; ctx.textAlign = 'center';
   ctx.fillText('SKIP — KEEP OIL', skipX + skipW / 2, skipY + skipH / 2 + 5);
 }
 
@@ -217,7 +229,7 @@ function wrapText(ctx, text, x, y, maxWidth, lineH) {
   return lineY;
 }
 
-function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSynergy, t) {
+function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSynergy, t, isWeapon) {
   const up = UPGRADES[key];
   if (!up) return;
   const lvl = s.upgradeLevels[key] || 0;
@@ -229,17 +241,30 @@ function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSy
   const rarityColor = RARITY_COLORS[rarity] || '#aaaacc';
   const isLegendary = rarity === 'legendary';
   const isRare = rarity === 'rare';
+  const isStackable = (up.maxLevel || 1) >= 99;
+  const alreadyOwned = lvl > 0;
 
   // ── Background ────────────────────────────────────────────────────────────
   let bgColor = 'rgba(14,14,32,0.96)';
-  if (isLegendary) bgColor = 'rgba(22,8,32,0.97)';
+  if (isWeapon) bgColor = 'rgba(22,14,4,0.97)';
+  else if (isLegendary) bgColor = 'rgba(22,8,32,0.97)';
   else if (isSynergy) bgColor = 'rgba(20,14,38,0.97)';
   ctx.fillStyle = bgColor;
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cx, cy, cardW, cardH, 14); ctx.fill(); }
   else ctx.fillRect(cx, cy, cardW, cardH);
 
-  // Legendary animated shimmer background
-  if (isLegendary) {
+  // Weapon card animated gold shimmer background
+  if (isWeapon) {
+    const shimmer = 0.05 + Math.abs(Math.sin(t * 2.8)) * 0.07;
+    const grad = ctx.createLinearGradient(cx, cy, cx + cardW, cy + cardH);
+    grad.addColorStop(0, 'rgba(200,120,0,' + shimmer + ')');
+    grad.addColorStop(0.5, 'rgba(255,180,0,' + (shimmer * 1.6) + ')');
+    grad.addColorStop(1, 'rgba(180,80,0,' + shimmer + ')');
+    ctx.fillStyle = grad;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cx, cy, cardW, cardH, 14); ctx.fill(); }
+    else ctx.fillRect(cx, cy, cardW, cardH);
+  } else if (isLegendary) {
+    // Legendary animated shimmer background
     const shimmer = 0.05 + Math.abs(Math.sin(t * 2.5)) * 0.06;
     const grad = ctx.createLinearGradient(cx, cy, cx + cardW, cy + cardH);
     grad.addColorStop(0, 'rgba(180,0,180,' + shimmer + ')');
@@ -260,15 +285,16 @@ function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSy
   // ── Border ────────────────────────────────────────────────────────────────
   let borderColor = rarityColor + (canAfford ? 'cc' : '44');
   let borderWidth = isLegendary ? 2.5 : (isRare ? 2 : 1.5);
-  if (isHovered && canAfford) { borderColor = rarityColor; borderWidth = isLegendary ? 3 : 2.5; }
+  if (isWeapon) { borderColor = canAfford ? '#ffaa00' : '#aa6600'; borderWidth = 2.5; }
+  if (isHovered && canAfford) { borderColor = isWeapon ? '#ffdd44' : rarityColor; borderWidth = isLegendary || isWeapon ? 3 : 2.5; }
   if (isSynergy) { borderColor = canAfford ? '#ffcc00cc' : '#ffcc0044'; borderWidth = 2; }
 
-  if (isLegendary) {
-    // Animated dashed border for legendary
+  if (isLegendary || isWeapon) {
+    // Animated dashed border for legendary and weapon cards
     ctx.strokeStyle = borderColor;
     ctx.lineWidth = borderWidth;
     ctx.setLineDash([10, 6]);
-    ctx.lineDashOffset = -t * 18;
+    ctx.lineDashOffset = -t * (isWeapon ? 22 : 18);
     if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cx, cy, cardW, cardH, 14); ctx.stroke(); }
     else ctx.strokeRect(cx, cy, cardW, cardH);
     ctx.setLineDash([]); ctx.lineDashOffset = 0;
@@ -280,7 +306,7 @@ function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSy
 
   // Hover glow
   if (isHovered && canAfford) {
-    ctx.fillStyle = rarityColor + '14';
+    ctx.fillStyle = isWeapon ? 'rgba(255,180,0,0.10)' : rarityColor + '14';
     if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cx, cy, cardW, cardH, 14); ctx.fill(); }
     else ctx.fillRect(cx, cy, cardW, cardH);
   }
@@ -309,21 +335,32 @@ function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSy
 
   // ── Category tag strip ────────────────────────────────────────────────────
   const tagH = Math.max(22, cardH * 0.07);
-  const tagColor = isLegendary ? rarityColor : catDef.color;
+  const tagColor = isWeapon ? '#cc7700' : (isLegendary ? rarityColor : catDef.color);
   ctx.fillStyle = tagColor + (canAfford ? 'cc' : '44');
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cx + 6, cy + 6, cardW - 12, tagH, 6); ctx.fill(); }
   else ctx.fillRect(cx + 6, cy + 6, cardW - 12, tagH);
   ctx.font = 'bold ' + Math.max(9, Math.min(12, cardH * 0.03)) + 'px monospace';
   ctx.fillStyle = canAfford ? '#000' : '#222';
-  ctx.fillText(isLegendary ? '★ LEGENDARY' : catDef.label, cx + cardW / 2, cy + tagH * 0.72 + 6);
+  const tagLabel = isWeapon ? '⚔ WEAPON' : (isLegendary ? '★ LEGENDARY' : catDef.label);
+  ctx.fillText(tagLabel, cx + cardW / 2, cy + tagH * 0.72 + 6);
 
   // ── Rarity badge (top-right corner) ─────────────────────────────────────
-  if (!isLegendary && rarity !== 'common') {
+  if (!isLegendary && !isWeapon && rarity !== 'common') {
     const badge = RARITY_LABELS[rarity] || rarity.toUpperCase();
     ctx.font = 'bold ' + Math.max(8, Math.min(10, cardW * 0.042)) + 'px monospace';
     ctx.fillStyle = rarityColor;
     ctx.textAlign = 'right';
     ctx.fillText(badge, cx + cardW - 8, cy + tagH + 18);
+    ctx.textAlign = 'center';
+  }
+
+  // ── Stack count badge (top-right corner for stackable + weapon cards) ─────
+  if (alreadyOwned && (isStackable || isWeapon)) {
+    const badgeSize = Math.max(8, Math.min(11, cardW * 0.046));
+    ctx.font = 'bold ' + badgeSize + 'px monospace';
+    ctx.fillStyle = canAfford ? '#ffdd55' : '#886622';
+    ctx.textAlign = 'right';
+    ctx.fillText('×' + lvl, cx + cardW - 8, cy + tagH + 18);
     ctx.textAlign = 'center';
   }
 
@@ -337,11 +374,14 @@ function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSy
   // ── Name ─────────────────────────────────────────────────────────────────
   const nameSize = Math.max(11, Math.min(16, cardW * 0.07));
   ctx.font = 'bold ' + nameSize + 'px monospace';
-  ctx.fillStyle = canAfford ? (isLegendary ? rarityColor : up.color) : '#555';
-  ctx.fillText(up.name, cx + cardW / 2, iconY + nameSize + 6);
+  const nameColor = isWeapon ? (canAfford ? '#ffcc44' : '#555') : (canAfford ? (isLegendary ? rarityColor : up.color) : '#555');
+  ctx.fillStyle = nameColor;
+  const namePrefix = alreadyOwned ? '+1 ' : '';
+  ctx.fillText(namePrefix + up.name, cx + cardW / 2, iconY + nameSize + 6);
 
-  // ── Level dots ────────────────────────────────────────────────────────────
-  if (up.maxLevel > 1) {
+  // ── Level dots (classic cards only, maxLevel ≤ 10) ───────────────────────
+  const hasClassicDots = up.maxLevel > 1 && up.maxLevel <= 10;
+  if (hasClassicDots) {
     const dotSize = Math.max(10, Math.min(14, cardW * 0.07));
     ctx.font = dotSize + 'px monospace';
     ctx.fillStyle = canAfford ? '#888' : '#444';
@@ -353,8 +393,8 @@ function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSy
   // ── Description (word-wrapped) ────────────────────────────────────────────
   const descSize = Math.max(9, Math.min(12, cardW * 0.052));
   ctx.font = descSize + 'px monospace';
-  ctx.fillStyle = canAfford ? (isLegendary ? '#ffccff' : '#ccc') : '#555';
-  const descY = iconY + nameSize + (up.maxLevel > 1 ? 36 : 22);
+  ctx.fillStyle = canAfford ? (isWeapon ? '#ffe8aa' : (isLegendary ? '#ffccff' : '#ccc')) : '#555';
+  const descY = iconY + nameSize + (hasClassicDots ? 36 : 22);
   wrapText(ctx, up.desc, cx + cardW / 2, descY, cardW - 16, descSize + 4);
 
   // ── Oil cost ─────────────────────────────────────────────────────────────

@@ -3,7 +3,8 @@ import {
   RIG_RECAPTURE_INTERVAL, MAX_LEVEL,
   PLAYER_BASE_SPEED, FIRE_BASE_COOLDOWN, BULLET_BASE_SPEED, PICKUP_RADIUS,
   OIL_CRITICAL_THRESHOLD, OIL_FLUSH_THRESHOLD, KILL_FEED_MAX,
-  OIL_MARKET_INTERVAL, EVENT_INTERVAL, NIGHT_CYCLE_INTERVAL, MILESTONE_INTERVAL,
+  OIL_MARKET_INTERVAL, EVENT_INTERVAL, MILESTONE_INTERVAL,
+  CHAIN_RADIUS, BLACK_HOLE_RADIUS,
   RIVALRY_CHECK_INTERVAL,
   RIG_RESERVE_MIN, RIG_RESERVE_MAX, RIG_MAX_COUNT,
   RIG_CLUSTER_CHANCE, RIG_CLUSTER_RADIUS_MIN, RIG_CLUSTER_RADIUS_MAX,
@@ -121,12 +122,6 @@ export const state = {
   activeEvent: null,    // { type, timer, maxTimer, data }
   nextEventTime: EVENT_INTERVAL,
 
-  /* Night cycle */
-  nightCycleTimer: NIGHT_CYCLE_INTERVAL,
-  nightMode: false,
-  nightAlpha: 0,        // 0–0.85 for smooth dark transition
-  nightDuration: 0,
-
   /* Faction rivalry */
   rivalryTimer: RIVALRY_CHECK_INTERVAL,
 
@@ -186,7 +181,7 @@ export function getBodyDamage(_s) { return 5; }
 
 export function getBulletSpeed(s) {
   let spd = BULLET_BASE_SPEED * (s.upgradeStats.bulletSpeedMult || 1) + (hasPowerup(s, 'speed') ? 3 : 0);
-  if (s.milestoneUnlocks?.night_fighter && s.nightMode) spd += 2;
+  if (s.milestoneUnlocks?.sharpshooter && s.combo >= 5) spd += (s.upgradeStats.sharpshooterSpeedBonus || 2);
   return spd;
 }
 
@@ -202,7 +197,9 @@ export function getReloadTime(s) {
 }
 
 export function getMoveSpeed(s) {
-  return (PLAYER_BASE_SPEED + (hasPowerup(s, 'speed') ? 1.5 : 0)) * (s.upgradeStats.speedMult || 1);
+  const base = (PLAYER_BASE_SPEED + (hasPowerup(s, 'speed') ? 1.5 : 0)) * (s.upgradeStats.speedMult || 1);
+  if (s.upgradeStats.deathWishActive && s.player.oil / getMaxOil(s) < 0.20) return base * (1 + (s.upgradeStats.deathWishBonus || 0.60));
+  return base;
 }
 export function getPickupRadius(s) { return PICKUP_RADIUS + (hasPowerup(s, 'magnet') ? 200 : 0); }
 
@@ -213,13 +210,27 @@ export function getBulletDamage(s) {
   }
   if (s.player.oilState === 'flush') dmg *= 1.10;
   if (s.player.counterAttackTimer > 0) dmg *= (1 + (s.upgradeStats.counterAttackMult || 0));
-  if (s.milestoneUnlocks?.veteran && s.combo >= 10) dmg *= 1.20;
-  if (s.milestoneUnlocks?.night_fighter && s.nightMode) dmg *= 1.15;
+  if (s.milestoneUnlocks?.veteran && s.combo >= 10) dmg *= (1 + (s.upgradeStats.veteranBonus || 0.20));
+  if (s.milestoneUnlocks?.sharpshooter && s.combo >= 5) dmg *= (1 + (s.upgradeStats.sharpshooterDmgBonus || 0.15));
   if (s.player.revengeBuff > 0) dmg *= 1.50;
   // Warcry wildcard: stacking bonus per kill
   if (s.upgradeStats.hasWarcry) dmg *= (s.upgradeStats.warcryDamageMult || 1);
   // Railgun mutation: bullets deal 2× damage
   if (s.upgradeStats.mutations?.railgun) dmg *= 2.0;
+  // Blood Tithe chaos card bonus
+  if (s.upgradeStats.bloodTitheDmgBonus > 0) dmg *= (1 + s.upgradeStats.bloodTitheDmgBonus);
+  // Glass Blade chaos card bonus
+  if (s.upgradeStats.glassBladeDmgBonus > 0) dmg *= (1 + s.upgradeStats.glassBladeDmgBonus);
+  // Oil Junkie: +1% per 10 oil up to stacking cap
+  if (s.upgradeStats.oilJunkieActive) {
+    const cap = s.upgradeStats.oilJunkieMaxBonus || 0.80;
+    const bonus = Math.min(cap, s.player.oil * 0.001);
+    dmg *= (1 + bonus);
+  }
+  // Death Wish: under 20% oil → stacking bonus
+  if (s.upgradeStats.deathWishActive && s.player.oil / getMaxOil(s) < 0.20) dmg *= (1 + (s.upgradeStats.deathWishBonus || 0.60));
+  // Resonance: ready burst
+  if (s.upgradeStats.resonanceReady) dmg *= 8;
   return dmg;
 }
 
@@ -368,18 +379,24 @@ export function resetUpgrades(s) {
     extraBullets: 0,
     speedMult: 1,
     dashCooldownBonus: 0,
-    hasWarhead: false,
+    hasWarhead: false, warheadLevel: 0,
     hasExplosiveRounds: false, explosiveRoundsMult: 0.4,
     vampireHeal: 0,
     hasFlakBurst: false, flakLevels: 0,
     extraInvincFrames: 0,
     hasTimeWarp: false,
     supplyNetworkBonus: 0,
-    // Stat card bonuses (replace old stats[] array)
-    maxOilMult: 1,          // glass_cannon / berserker reduce this
-    statMaxOilBonus: 0,     // stat_health card
-    bulletSpeedMult: 1,     // stat_bullet_spd card
-    reloadMult: 1,          // stat_reload card
+    // Stat card bonuses
+    maxOilMult: 1,
+    statMaxOilBonus: 0,
+    bulletSpeedMult: 1,
+    reloadMult: 1,
+    // Intermediate level fields for shared-stat cards
+    speedBoostLvl: 0, statSpeedLvl: 0,
+    armorPlatLvl: 0,  statArmorLvl: 0,
+    calibLvl: 0,      statDmgLvl: 0,
+    repairLvl: 0,     statRegenLvl: 0,
+    pierceLvl: 0,     statPierceLvl: 0,
     // Synergies (original 4)
     hasPulseArmor: false,
     hasMissileBattery: false,
@@ -400,17 +417,54 @@ export function resetUpgrades(s) {
     wildBerserker: false,
     wildGlassCannon: false,
     wildBloodPact: false,
-    bulletOilCostMult: 1,   // multiplier on bullet oil cost (blood pact = 3×)
+    bulletOilCostMult: 1,
     hasPhoenix: false,
     phoenixUsed: false,
-    swarmDroneCount: 0,     // wild_drone_swarm adds 3
-    hasVoidRounds: false,
-    hasChaosEngine: false,
-    hasTimeBandit: false,
-    hasLuckyBreak: false,   luckyBreakTimer: 0,
-    hasOilMagnate: false,
-    hasWarcry: false,       warcryStacks: 0, warcryTimer: 0,
-    hasWildOverclock: false, overclockBulletCount: 0,
+    swarmDroneCount: 0,
+    hasVoidRounds: false,       voidArmorIgnore: 0.60,
+    hasChaosEngine: false,      chaosEngineChance: 0.20,
+    hasTimeBandit: false,       timeBanditChance: 0.25,
+    hasLuckyBreak: false,       luckyBreakTimer: 0, luckyBreakInterval: 20,
+    hasOilMagnate: false,       oilMagnateBonus: 2.0,
+    hasWarcry: false,           warcryStacks: 0, warcryTimer: 0,
+    hasWildOverclock: false,    overclockBulletCount: 0, overclockFreePeriod: 5,
+    // Synergy extras
+    pulseArmorRadius: 200, missileBatteryDmgMult: 1, infernoChainRadius: 140,
+    adaptivePlatRestorePct: 0.6, chainReactionCount: 1, bloodMoneyDrainMult: 1,
+    ghostDuration: 1.0, overkillSplitCount: 2, overloadNapalmCount: 4,
+    ironStormExtraPellets: 0, timeSniperMult: 3, oilVortexRadius: 450, shockNovaRadius: 150,
+    // black_hole / time_warp stacking
+    blackHoleRadiusBonus: 0, blackHoleCooldownBonus: 0,
+    timeWarpStunBonus: 0, timeWarpCooldownBonus: 0,
+    // Chaos card stacking extras
+    cursedMagCycle: 8, oilJunkieMaxBonus: 0.80, oilJunkieDrain: 0.15,
+    deathWishBonus: 0.60, resonanceKillsRequired: 5, scavengerMult: 3,
+    // Passive perk (formerly milestone) extras
+    ms_second_wind: false, secondWindOil: 25,
+    ms_adrenaline: false,  adrenalineOil: 4,
+    ms_war_economy: false, warEconomyBonus: 0.30,
+    ms_veteran: false,     veteranBonus: 0.20,
+    ms_salvager: false,    salvagerMult: 1.50,
+    ms_pipeline_expert: false, pipelineIncomeMult: 3,
+    ms_sharpshooter: false, sharpshooterSpeedBonus: 2, sharpshooterDmgBonus: 0.15,
+    ms_opportunist: false, opportunistMult: 1.40,
+    // Weapon system
+    activeWeapon: 'default',
+    weaponLevels: {},          // { weaponName: stackCount }
+    // Companion system
+    scoutDrones: 0, combatDrones: 0, shieldDrones: 0, repairDrones: 0, bomberDrones: 0,
+    companionOilDrain: 0,
+    companionShieldTimers: [], // [ shieldCooldownTimer, ... ] per shield drone
+    bomberDroneTimers: [],     // cooldown timer per bomber drone
+    // Chaos cards
+    bloodTitheDrain: 0,        bloodTitheDmgBonus: 0,
+    glassBladeDmgBonus: 0,     glassBlade: false,
+    volatileActive: false,
+    cursedMagActive: false,    cursedMagCounter: 0, cursedMagCycle: 8,
+    oilJunkieActive: false,    oilJunkieMaxBonus: 0.80, oilJunkieDrain: 0.15,
+    deathWishActive: false,    deathWishBonus: 0.60,
+    resonanceActive: false,    resonanceKills: 0, resonanceReady: false, resonanceKillsRequired: 5,
+    scavengerMode: false,      scavengerMult: 3,
     // Weapon mutations
     mutations: {},
   };
@@ -418,77 +472,131 @@ export function resetUpgrades(s) {
   s.totalUpgrades = 0;
 }
 
+/* Helper: recompute combined speedMult from both speed cards */
+function _speedMult(us) { return 1 + (us.speedBoostLvl||0) * 0.06 + (us.statSpeedLvl||0) * 0.04; }
+/* Helper: recompute combined armorReduction */
+function _armorReduc(us) { return Math.min(0.80, (us.armorPlatLvl||0) * 0.06 + (us.statArmorLvl||0) * 0.04); }
+/* Helper: recompute combined damageMult (base only, wildcards multiply on top) */
+function _damageMult(us) { return 1 + (us.calibLvl||0) * 0.10 + (us.statDmgLvl||0) * 0.08; }
+/* Helper: recompute combined regenRate */
+function _regenRate(us) { return (us.repairLvl||0) * 2 + (us.statRegenLvl||0) * 1.5 + (us.repairDrones||0) * 1.5; }
+/* Helper: recompute combined extraPierce */
+function _extraPierce(us) { return (us.pierceLvl||0) + (us.statPierceLvl||0); }
+/* Helper: recompute companion drain */
+function _companionDrain(us) {
+  return (us.scoutDrones||0) * 0.3 + (us.combatDrones||0) * 0.6 +
+         (us.shieldDrones||0) * 0.8 + (us.repairDrones||0) * 0.5 +
+         (us.bomberDrones||0) * 1.0;
+}
+
 const UPGRADE_APPLY = {
-  spread_shot:      (l, us) => { us.spreadCount = 1 + l * 2; },
-  oil_magnet:       (l, us) => { us.oilMult = 1 + l * 0.5; },
-  shield:           (l, us) => { us.shieldInterval = Math.max(7, 15 - l * 4); us.hasShield = true; },
-  emp:              (l, us) => { us.empRadius = 80 + l * 60; us.hasEmp = true; },
-  critical:         (l, us) => { us.critChance = l * 0.15; },
-  repair:           (l, us) => { us.regenRate = l * 3; },
-  missile_boost:    (l, us) => { us.missileDmgMult = 1 + l * 0.4; us.missileSpeedMult = 1 + l * 0.3; },
-  piercing:         (l, us) => { us.extraPierce = l; },
+  // ── FIREPOWER (stackable, small bonuses) ───────────────────────────────────
+  spread_shot:      (l, us) => { us.spreadCount = 1 + l; },
+  oil_magnet:       (l, us) => { us.oilMult = 1 + l * 0.10; },
+  shield:           (l, us) => { us.shieldInterval = Math.max(5, 15 - l * 0.8); us.hasShield = true; },
+  emp:              (l, us) => { us.empRadius = 60 + l * 20; us.hasEmp = true; },
+  critical:         (l, us) => { us.critChance = Math.min(0.9, l * 0.05); },
+  repair:           (l, us) => { us.repairLvl = l; us.regenRate = _regenRate(us); },
+  missile_boost:    (l, us) => { us.missileDmgMult = 1 + l * 0.10; us.missileSpeedMult = 1 + l * 0.08; },
+  piercing:         (l, us) => { us.pierceLvl = l; us.extraPierce = _extraPierce(us); },
   orbital:          (l, us) => { us.orbitalCount = l; },
-  xp_boost:         (l, us) => { us.xpMult = 1 + l * 0.3; },
+  xp_boost:         (l, us) => { us.xpMult = 1 + l * 0.08; },
   chain_lightning:  (l, us) => { us.chainCount = l; },
-  napalm:           (l, us) => { us.hasNapalm = true; us.napalmDpsMult = 1 + (l - 1) * 0.5; },
-  armor_plating:    (l, us) => { us.armorReduction = l * 0.15; },
-  counter_attack:   (l, us) => { us.counterAttackMult = l === 1 ? 0.30 : 0.50; },
-  fortify:          (l, us) => { us.hasFortify = true; us.fortifyTurretCount = l; },
-  overcharge:       (l, us) => { us.overchargeBonus = l === 1 ? 0.15 : 0.25; },
-  reckless:         (l, us) => { us.recklessBonus = l === 1 ? 0.30 : 0.50; },
-  oil_nova:         (l, us) => { us.hasOilNova = true; us.oilNovaRadius = l; },
-  black_hole:       (_l, us) => { us.hasBlackHole = true; },
-  // New abilities
-  rapid_fire:       (l, us) => { us.fireMult = 1 + l * 0.20; },
-  high_caliber:     (l, us) => { us.damageMult = 1 + l * 0.25; },
+  napalm:           (l, us) => { us.hasNapalm = true; us.napalmDpsMult = 1 + l * 0.15; },
+  armor_plating:    (l, us) => { us.armorPlatLvl = l; us.armorReduction = _armorReduc(us); },
+  counter_attack:   (l, us) => { us.counterAttackMult = l * 0.08; },
+  fortify:          (l, us) => { us.hasFortify = true; us.fortifyTurretCount = Math.min(4, 1 + Math.floor(l / 3)); },
+  overcharge:       (l, us) => { us.overchargeBonus = l * 0.08; },
+  reckless:         (l, us) => { us.recklessBonus = l * 0.08; },
+  oil_nova:         (l, us) => { us.hasOilNova = true; us.oilNovaRadius = 1 + l * 0.3; },
+  black_hole:       (l, us) => { us.hasBlackHole = true; us.blackHoleRadiusBonus = (l - 1) * 20; us.blackHoleCooldownBonus = (l - 1) * 2; },
+  rapid_fire:       (l, us) => { us.fireMult = 1 + l * 0.05; },
+  high_caliber:     (l, us) => { us.calibLvl = l; us.damageMult = _damageMult(us); },
   burst_shot:       (l, us) => { us.extraBullets = l; },
-  speed_boost:      (l, us) => { us.speedMult = 1 + l * 0.18; },
-  reflex_dash:      (l, us) => { us.dashCooldownBonus = l * 0.6; },
-  warhead:          (_l, us) => { us.hasWarhead = true; },
-  explosive_rounds: (l, us) => { us.hasExplosiveRounds = true; us.explosiveRoundsMult = 0.3 + l * 0.1; },
-  vampire_rounds:   (l, us) => { us.vampireHeal = l * 0.4; },
+  speed_boost:      (l, us) => { us.speedBoostLvl = l; us.speedMult = _speedMult(us); },
+  reflex_dash:      (l, us) => { us.dashCooldownBonus = l * 0.4; },
+  warhead:          (l, us) => { us.hasWarhead = true; us.warheadLevel = l; },
+  explosive_rounds: (l, us) => { us.hasExplosiveRounds = true; us.explosiveRoundsMult = 0.20 + l * 0.05; },
+  vampire_rounds:   (l, us) => { us.vampireHeal = l * 0.3; },
   flak_burst:       (l, us) => { us.hasFlakBurst = true; us.flakLevels = l; },
-  iron_will:        (l, us) => { us.extraInvincFrames = l * 0.35; },
-  time_warp:        (_l, us) => { us.hasTimeWarp = true; },
-  supply_network:   (l, us) => { us.supplyNetworkBonus = l; },
-  // Stat cards (replace old stats[] array)
-  stat_speed:       (l, us) => { us.speedMult = (us.speedMult || 1) * Math.pow(1.12, l); },
-  stat_armor:       (l, us) => { us.armorReduction = Math.min(0.75, (us.armorReduction || 0) + l * 0.12); },
-  stat_health:      (l, us) => { us.statMaxOilBonus = (us.statMaxOilBonus || 0) + 150; },
-  stat_regen:       (l, us) => { us.regenRate = (us.regenRate || 0) + 2; },
-  stat_reload:      (l, us) => { us.reloadMult = Math.max(0.3, (us.reloadMult || 1) * 0.88); },
-  stat_bullet_spd:  (l, us) => { us.bulletSpeedMult = (us.bulletSpeedMult || 1) * Math.pow(1.20, l); },
-  stat_bullet_dmg:  (l, us) => { us.damageMult = (us.damageMult || 1) * Math.pow(1.20, l); },
-  stat_pierce:      (l, us) => { us.extraPierce = (us.extraPierce || 0) + 1; },
-  // Wildcard cards
-  wild_berserker:   (_l, us) => { us.wildBerserker = true; us.maxOilMult = Math.max(0.1, (us.maxOilMult || 1) * 0.75); us.fireMult = (us.fireMult || 1) * 1.5; us.damageMult = (us.damageMult || 1) * 1.4; },
-  wild_glass_cannon:(_l, us) => { us.wildGlassCannon = true; us.maxOilMult = Math.max(0.1, (us.maxOilMult || 1) * 0.60); us.extraPierce = 999; us.damageMult = (us.damageMult || 1) * 1.6; },
-  wild_blood_pact:  (_l, us) => { us.wildBloodPact = true; us.bulletOilCostMult = (us.bulletOilCostMult || 1) * 3; us.damageMult = (us.damageMult || 1) * 2.0; },
-  wild_phoenix:     (_l, us) => { us.hasPhoenix = true; us.phoenixUsed = false; },
-  wild_drone_swarm: (_l, us) => { us.swarmDroneCount = (us.swarmDroneCount || 0) + 3; },
-  wild_void_rounds: (_l, us) => { us.hasVoidRounds = true; },
-  wild_chaos_engine:(_l, us) => { us.hasChaosEngine = true; },
-  wild_time_bandit: (_l, us) => { us.hasTimeBandit = true; },
-  wild_lucky_break: (_l, us) => { us.hasLuckyBreak = true; us.luckyBreakTimer = 0; },
-  wild_oil_magnate: (_l, us) => { us.hasOilMagnate = true; },
-  wild_warcry:      (_l, us) => { us.hasWarcry = true; us.warcryStacks = 0; us.warcryTimer = 0; },
-  wild_overclock:   (_l, us) => { us.hasWildOverclock = true; us.overclockBulletCount = 0; },
-  // Synergies (original 4)
-  pulse_armor:      (_l, us) => { us.hasPulseArmor = true; },
-  missile_battery:  (_l, us) => { us.hasMissileBattery = true; },
-  inferno_barrage:  (_l, us) => { us.hasInfernoBarrage = true; },
-  adaptive_plating: (_l, us) => { us.hasAdaptivePlating = true; },
-  // Synergies (expanded)
-  chain_reaction:   (_l, us) => { us.hasChainReaction = true; },
-  blood_money:      (_l, us) => { us.hasBloodMoney = true; },
-  ghost_protocol:   (_l, us) => { us.hasGhostProtocol = true; },
-  overkill:         (_l, us) => { us.hasOverkill = true; },
-  overload:         (_l, us) => { us.hasOverload = true; },
-  iron_storm:       (_l, us) => { us.hasIronStorm = true; },
-  time_sniper:      (_l, us) => { us.hasTimeSniper = true; },
-  oil_vortex:       (_l, us) => { us.hasOilVortex = true; },
-  shock_nova:       (_l, us) => { us.hasShockNova = true; },
-  war_machine:      (_l, us) => { us.hasWarMachine = true; },
+  iron_will:        (l, us) => { us.extraInvincFrames = l * 0.25; },
+  time_warp:        (l, us) => { us.hasTimeWarp = true; us.timeWarpStunBonus = (l - 1); us.timeWarpCooldownBonus = (l - 1) * 2; },
+  supply_network:   (l, us) => { us.supplyNetworkBonus = l * 0.8; },
+  // ── STAT CARDS ──────────────────────────────────────────────────────────────
+  stat_speed:       (l, us) => { us.statSpeedLvl = l; us.speedMult = _speedMult(us); },
+  stat_armor:       (l, us) => { us.statArmorLvl = l; us.armorReduction = _armorReduc(us); },
+  stat_health:      (l, us) => { us.statMaxOilBonus = l * 100; },
+  stat_regen:       (l, us) => { us.statRegenLvl = l; us.regenRate = _regenRate(us); },
+  stat_reload:      (l, us) => { us.reloadMult = Math.max(0.20, 1 - l * 0.04); },
+  stat_bullet_spd:  (l, us) => { us.bulletSpeedMult = 1 + l * 0.08; },
+  stat_bullet_dmg:  (l, us) => { us.statDmgLvl = l; us.damageMult = _damageMult(us); },
+  stat_pierce:      (l, us) => { us.statPierceLvl = l; us.extraPierce = _extraPierce(us); },
+  // ── WEAPON CARDS ────────────────────────────────────────────────────────────
+  weapon_dual:       (l, us) => { us.activeWeapon = 'dual';      if(!us.weaponLevels)us.weaponLevels={}; us.weaponLevels.dual      = l; },
+  weapon_triple:     (l, us) => { us.activeWeapon = 'triple';    if(!us.weaponLevels)us.weaponLevels={}; us.weaponLevels.triple    = l; },
+  weapon_shotgun:    (l, us) => { us.activeWeapon = 'shotgun';   if(!us.weaponLevels)us.weaponLevels={}; us.weaponLevels.shotgun   = l; },
+  weapon_sniper:     (l, us) => { us.activeWeapon = 'sniper';    if(!us.weaponLevels)us.weaponLevels={}; us.weaponLevels.sniper    = l; },
+  weapon_machinegun: (l, us) => { us.activeWeapon = 'machinegun';if(!us.weaponLevels)us.weaponLevels={}; us.weaponLevels.machinegun= l; },
+  weapon_missile:    (l, us) => { us.activeWeapon = 'missile';   if(!us.weaponLevels)us.weaponLevels={}; us.weaponLevels.missile   = l; },
+  weapon_rocket:     (l, us) => { us.activeWeapon = 'rocket';    if(!us.weaponLevels)us.weaponLevels={}; us.weaponLevels.rocket    = l; },
+  weapon_grenade:    (l, us) => { us.activeWeapon = 'grenade';   if(!us.weaponLevels)us.weaponLevels={}; us.weaponLevels.grenade   = l; },
+  // ── COMPANION CARDS ─────────────────────────────────────────────────────────
+  companion_scout:   (l, us) => { us.scoutDrones  = l; us.companionOilDrain = _companionDrain(us); },
+  companion_combat:  (l, us) => { us.combatDrones = l; us.companionOilDrain = _companionDrain(us); },
+  companion_shield:  (l, us) => { us.shieldDrones = l; us.companionShieldTimers = Array.from({length:l},()=>0); us.companionOilDrain = _companionDrain(us); },
+  companion_repair:  (l, us) => { us.repairDrones = l; us.regenRate = _regenRate(us); us.companionOilDrain = _companionDrain(us); },
+  companion_bomber:  (l, us) => { us.bomberDrones = l; us.bomberDroneTimers = Array.from({length:l},()=>0); us.companionOilDrain = _companionDrain(us); },
+  // ── CHAOS / DRAWBACK CARDS ──────────────────────────────────────────────────
+  card_blood_tithe:  (l, us) => { us.bloodTitheDrain = l * 0.4; us.bloodTitheDmgBonus = l * 0.15; },
+  card_glass_blade:  (l, us) => { us.glassBlade = true; us.glassBladeDmgBonus = l * 0.20; },
+  card_volatile:     (l, us) => { us.volatileActive = true; us.volatileChance = Math.min(0.35, l * 0.08); },
+  card_cursed_mag:   (l, us) => { us.cursedMagActive = true; us.cursedMagCounter = 0; us.cursedMagCycle = Math.max(4, 8 - (l - 1)); },
+  card_oil_junkie:   (l, us) => { us.oilJunkieActive = true; us.oilJunkieMaxBonus = 0.80 + (l - 1) * 0.10; us.oilJunkieDrain = 0.15 + (l - 1) * 0.05; },
+  card_death_wish:   (l, us) => { us.deathWishActive = true; us.deathWishBonus = 0.60 + (l - 1) * 0.20; },
+  card_resonance:    (l, us) => { us.resonanceActive = true; us.resonanceKills = 0; us.resonanceReady = false; us.resonanceKillsRequired = Math.max(2, 5 - (l - 1)); },
+  card_scavenger:    (l, us) => { us.scavengerMode = true; us.scavengerMult = 3 + (l - 1); },
+  // ── WILDCARD CARDS ──────────────────────────────────────────────────────────
+  wild_berserker:    (l, us) => { us.wildBerserker = true; if (l === 1) { us.maxOilMult = Math.max(0.1, (us.maxOilMult||1)*0.75); us.fireMult = (us.fireMult||1)*1.5; us.damageMult = (us.damageMult||1)*1.4; } else { us.fireMult = (us.fireMult||1)*1.08; us.damageMult = (us.damageMult||1)*1.10; } },
+  wild_glass_cannon: (l, us) => { us.wildGlassCannon = true; if (l === 1) { us.maxOilMult = Math.max(0.1, (us.maxOilMult||1)*0.60); us.extraPierce = 999; us.damageMult = (us.damageMult||1)*1.6; } else { us.damageMult = (us.damageMult||1)*1.20; } },
+  wild_blood_pact:   (l, us) => { us.wildBloodPact = true; if (l === 1) { us.bulletOilCostMult = (us.bulletOilCostMult||1)*3; us.damageMult = (us.damageMult||1)*2.0; } else { us.damageMult = (us.damageMult||1)*1.50; } },
+  wild_phoenix:      (_l, us) => { us.hasPhoenix = true; us.phoenixUsed = false; },
+  wild_drone_swarm:  (_l, us) => { us.swarmDroneCount = (us.swarmDroneCount||0)+3; },
+  wild_void_rounds:  (l, us) => { us.hasVoidRounds = true; us.voidArmorIgnore = Math.min(0.90, 0.60 + (l - 1) * 0.15); },
+  wild_chaos_engine: (l, us) => { us.hasChaosEngine = true; us.chaosEngineChance = Math.min(0.5, 0.20 + (l - 1) * 0.10); },
+  wild_time_bandit:  (l, us) => { us.hasTimeBandit = true; us.timeBanditChance = Math.min(0.55, 0.25 + (l - 1) * 0.10); },
+  wild_lucky_break:  (l, us) => { us.hasLuckyBreak = true; us.luckyBreakTimer = 0; us.luckyBreakInterval = Math.max(10, 20 - (l - 1) * 5); },
+  wild_oil_magnate:  (l, us) => { us.hasOilMagnate = true; us.oilMagnateBonus = 2.0 + (l - 1) * 0.5; },
+  wild_warcry:       (_l, us) => { us.hasWarcry = true; us.warcryStacks = 0; us.warcryTimer = 0; },
+  wild_overclock:    (l, us) => { us.hasWildOverclock = true; us.overclockBulletCount = 0; us.overclockFreePeriod = Math.max(3, 5 - (l - 1)); },
+  // ── SYNERGIES ───────────────────────────────────────────────────────────────
+  pulse_armor:       (l, us) => { us.hasPulseArmor = true; us.pulseArmorRadius = 200 + (l - 1) * 50; },
+  missile_battery:   (l, us) => { us.hasMissileBattery = true; us.missileBatteryDmgMult = 1 + (l - 1) * 0.20; },
+  inferno_barrage:   (l, us) => { us.hasInfernoBarrage = true; us.infernoChainRadius = CHAIN_RADIUS + (l - 1) * 20; },
+  adaptive_plating:  (l, us) => { us.hasAdaptivePlating = true; us.adaptivePlatRestorePct = 0.6 + (l - 1) * 0.10; },
+  chain_reaction:    (l, us) => { us.hasChainReaction = true; us.chainReactionCount = l; },
+  blood_money:       (l, us) => { us.hasBloodMoney = true; us.bloodMoneyDrainMult = 1 + (l - 1) * 0.20; },
+  ghost_protocol:    (l, us) => { us.hasGhostProtocol = true; us.ghostDuration = 1.0 + (l - 1) * 0.5; },
+  overkill:          (l, us) => { us.hasOverkill = true; us.overkillSplitCount = 2 + (l - 1); },
+  overload:          (l, us) => { us.hasOverload = true; us.overloadNapalmCount = 4 + (l - 1); },
+  iron_storm:        (l, us) => { us.hasIronStorm = true; us.ironStormExtraPellets = (l - 1) * 2; },
+  time_sniper:       (l, us) => { us.hasTimeSniper = true; us.timeSniperMult = 3 + (l - 1) * 0.5; },
+  oil_vortex:        (l, us) => { us.hasOilVortex = true; us.oilVortexRadius = BLACK_HOLE_RADIUS * 1.5 + (l - 1) * 50; },
+  shock_nova:        (l, us) => { us.hasShockNova = true; us.shockNovaRadius = 150 + (l - 1) * 50; },
+  war_machine:       (_l, us) => { us.hasWarMachine = true; },
+  // ── WEAPON CARDS (new) ──────────────────────────────────────────────────────
+  weapon_chain_gun:   (l, us) => { us.activeWeapon = 'chain_gun';   if(!us.weaponLevels) us.weaponLevels={}; us.weaponLevels.chain_gun   = l; },
+  weapon_plasma:      (l, us) => { us.activeWeapon = 'plasma';      if(!us.weaponLevels) us.weaponLevels={}; us.weaponLevels.plasma      = l; },
+  weapon_flak:        (l, us) => { us.activeWeapon = 'flak';        if(!us.weaponLevels) us.weaponLevels={}; us.weaponLevels.flak        = l; },
+  weapon_laser_rifle: (l, us) => { us.activeWeapon = 'laser_rifle'; if(!us.weaponLevels) us.weaponLevels={}; us.weaponLevels.laser_rifle = l; },
+  // ── PASSIVE PERK CARDS (formerly milestone system) ──────────────────────────
+  ms_second_wind:     (l, us) => { us.ms_second_wind = true; us.secondWindOil = 25 + (l - 1) * 15; },
+  ms_adrenaline:      (l, us) => { us.ms_adrenaline = true; us.adrenalineOil = 4 + (l - 1) * 2; },
+  ms_war_economy:     (l, us) => { us.ms_war_economy = true; us.warEconomyBonus = 0.30 + (l - 1) * 0.10; },
+  ms_veteran:         (l, us) => { us.ms_veteran = true; us.veteranBonus = 0.20 + (l - 1) * 0.10; },
+  ms_salvager:        (l, us) => { us.ms_salvager = true; us.salvagerMult = 1.50 + (l - 1) * 0.25; },
+  ms_pipeline_expert: (l, us) => { us.ms_pipeline_expert = true; us.pipelineIncomeMult = 3 + (l - 1) * 0.5; },
+  ms_sharpshooter:    (l, us) => { us.ms_sharpshooter = true; us.sharpshooterSpeedBonus = 2 + (l - 1); us.sharpshooterDmgBonus = 0.15 + (l - 1) * 0.05; },
+  ms_opportunist:     (l, us) => { us.ms_opportunist = true; us.opportunistMult = 1.40 + (l - 1) * 0.20; },
 };
 
 const MUTATION_APPLY = {
@@ -501,20 +609,29 @@ const MUTATION_APPLY = {
 };
 
 export function getUpgradeChoices(s) {
-  // Build weighted pool by rarity
-  // Rarity weights: common=60, rare=25, legendary=10 (wildcards)
+  // Rarity weights: common=60, rare=25, legendary=10
   const RARITY_WEIGHT = { common: 60, rare: 25, legendary: 10 };
 
-  const pool = Object.keys(UPGRADES).filter(k => {
+  // Non-weapon, non-companion cards that haven't hit their maxLevel
+  // Synergies are offered separately; one-time cards excluded after first pick
+  const statPool = Object.keys(UPGRADES).filter(k => {
     const up = UPGRADES[k];
-    if (up.synergy) return false;
-    return (s.upgradeLevels[k] || 0) < up.maxLevel;
+    if (up.synergy) return false;          // offered via synergy slot
+    if (up.category === 'weapon') return false;
+    if (up.category === 'companion') return false;
+    // Cards that have hit their maxLevel don't appear again
+    if ((s.upgradeLevels[k] || 0) >= (up.maxLevel || 1)) return false;
+    return true;
   });
 
-  // Weighted random pick from pool
-  function weightedPick(available) {
+  // Weapon pool
+  const weaponPool = Object.keys(UPGRADES).filter(k => UPGRADES[k].category === 'weapon');
+
+  // Weighted random pick
+  function weightedPick(available, exclude) {
+    const filtered = available.filter(k => !exclude.has(k));
     const weighted = [];
-    for (const k of available) {
+    for (const k of filtered) {
       const up = UPGRADES[k];
       const w = RARITY_WEIGHT[up.rarity] || 60;
       for (let i = 0; i < w; i++) weighted.push(k);
@@ -523,42 +640,32 @@ export function getUpgradeChoices(s) {
     return weighted[randInt(0, weighted.length - 1)];
   }
 
-  const choices = [];
+  // Pick 3 stat/effect cards
   const used = new Set();
-  let attempts = 0;
-  while (choices.length < 3 && attempts < 200) {
-    attempts++;
-    const remaining = pool.filter(k => !used.has(k));
-    if (remaining.length === 0) break;
-    const pick = weightedPick(remaining);
-    if (pick && !used.has(pick)) {
-      choices.push(pick);
-      used.add(pick);
-    }
+  const statChoices = [];
+  for (let i = 0; i < 3 && statChoices.length < 3; i++) {
+    const pick = weightedPick(statPool, used);
+    if (pick) { statChoices.push(pick); used.add(pick); }
   }
 
+  // Check for synergy or mutation to replace one stat slot
   const availableSynergies = SYNERGY_KEYS.filter(k => {
-    if ((s.upgradeLevels[k] || 0) >= UPGRADES[k].maxLevel) return false;
-    return UPGRADES[k].requires.every(req => (s.upgradeLevels[req] || 0) >= UPGRADES[req].maxLevel);
+    const up = UPGRADES[k];
+    if ((s.upgradeLevels[k] || 0) >= (up.maxLevel || 1)) return false;
+    return up.requires.every(req => (s.upgradeLevels[req] || 0) >= 1);
   });
-
   const availableMutations = Object.keys(MUTATIONS).filter(mk => {
+    if (s.upgradeStats.mutations?.[mk]) return false;
     const mut = MUTATIONS[mk];
-    const baseUp = UPGRADES[mut.base];
-    if (!baseUp) return false;
-    if ((s.upgradeLevels[mut.base] || 0) < baseUp.maxLevel) return false;
-    return !s.upgradeStats.mutations?.[mk];
+    return (s.upgradeLevels[mut.base] || 0) >= 3;
   });
+  if (availableSynergies.length > 0) statChoices.push(availableSynergies[0]);
+  if (availableMutations.length > 0) statChoices.push(availableMutations[randInt(0, availableMutations.length - 1)]);
 
-  if (availableSynergies.length > 0) {
-    choices.push(availableSynergies[0]);
-  }
+  // Always pick 1 weapon card (can be any weapon, including one already owned → upgrade)
+  const weaponPick = weightedPick(weaponPool, new Set());
 
-  if (availableMutations.length > 0) {
-    choices.push(availableMutations[randInt(0, availableMutations.length - 1)]);
-  }
-
-  return choices;
+  return [...statChoices, weaponPick].filter(Boolean);
 }
 
 /** Oil cost to research the NEXT level of an upgrade (currentLevel = level before upgrade). */
@@ -593,6 +700,11 @@ export function applyUpgrade(s, key) {
   s.player.oil = Math.max(0, s.player.oil - cost);
   s.upgradeLevels[key] = currentLevel + 1;
   if (UPGRADE_APPLY[key]) UPGRADE_APPLY[key](s.upgradeLevels[key], s.upgradeStats);
+  // Passive perk cards: also set milestoneUnlocks so legacy check sites keep working
+  if (key.startsWith('ms_')) {
+    const mk = key.replace('ms_', '');
+    s.milestoneUnlocks[mk] = true;
+  }
   s.totalUpgrades++;
 }
 
@@ -639,9 +751,9 @@ export function registerKill(s, scoreVal, enemyInfo) {
     s.player.oil = Math.min(getMaxOil(s), s.player.oil + OIL_KILL_DROP_BONUS);
   }
 
-  // Adrenaline milestone: kills when low oil restore extra oil
+  // Adrenaline perk: kills when low oil restore extra oil (stackable)
   if (s.milestoneUnlocks?.adrenaline && s.player.oil / getMaxOil(s) < 0.20) {
-    s.player.oil = Math.min(getMaxOil(s), s.player.oil + 4);
+    s.player.oil = Math.min(getMaxOil(s), s.player.oil + (s.upgradeStats.adrenalineOil || 4));
   }
 
   // ── Wildcard effects on kill ───────────────────────────────────────────────
@@ -804,8 +916,8 @@ export function resetGameState(s) {
   s.respiteTimer = 0;
   s.surgeTimer = 80;
   s.surgeActive = 0;
-  // Progressive rigs
-  s.nextRigSpawnTime = RIG_SPAWN_INTERVAL;
+  // Progressive rigs — spawn first one quickly (12 seconds)
+  s.nextRigSpawnTime = 12;
   s.totalRigsSpawned = 1;
   // AI upgrades
   s.aiUpgrades = [];
@@ -847,11 +959,6 @@ export function resetGameState(s) {
   // Events
   s.activeEvent = null;
   s.nextEventTime = EVENT_INTERVAL;
-  // Night cycle
-  s.nightCycleTimer = NIGHT_CYCLE_INTERVAL;
-  s.nightMode = false;
-  s.nightAlpha = 0;
-  s.nightDuration = 0;
   // Rivalry
   s.rivalryTimer = RIVALRY_CHECK_INTERVAL;
   s.nearRig = null;
