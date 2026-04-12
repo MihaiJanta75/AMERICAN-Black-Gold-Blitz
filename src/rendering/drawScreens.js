@@ -64,7 +64,7 @@ export function drawTitle(ctx, s) {
   features.forEach((l, i) => ctx.fillText(l, W / 2, H * 0.36 + i * Math.min(22, W * 0.032)));
 
   ctx.fillStyle = '#aa44ff'; ctx.font = 'bold ' + Math.min(14, W * 0.025) + 'px monospace';
-  ctx.fillText('23 UPGRADES + SYNERGY EVOLUTIONS + INSANE COMBOS', W / 2, H * 0.73);
+  ctx.fillText('27 UPGRADES + COMPANIONS + SYNERGY EVOLUTIONS + INSANE COMBOS', W / 2, H * 0.73);
 
   if (highScore > 0) {
     ctx.fillStyle = '#ffcc00'; ctx.font = 'bold ' + Math.min(14, W * 0.025) + 'px monospace';

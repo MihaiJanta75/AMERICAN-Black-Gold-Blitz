@@ -413,6 +413,19 @@ export function updateCombat(s, dt, soundFn) {
     soundFn('explosion', e.isBoss ? 0.5 : 0.3);
     s.totalDamageDealt += e.maxHp;
 
+    // Rampage Nova synergy: kills during RAMPAGE explode in AoE
+    if (s.upgradeStats.hasRampageNova && player.rampageActive) {
+      const novaR = s.upgradeStats.rampageNovaRadius || 60;
+      for (const ne of s.enemies) {
+        if (ne === e) continue;
+        if (dist(e, ne) < novaR) {
+          ne.hp -= 35;
+          spawnExplosion(s, ne.x, ne.y, '#ff4400', 4);
+        }
+      }
+      spawnExplosion(s, e.x, e.y, '#ff6600', 10);
+    }
+
     if (e.isBoss) s.totalKills.boss++;
     else s.totalKills[e.type] = (s.totalKills[e.type] || 0) + 1;
 
