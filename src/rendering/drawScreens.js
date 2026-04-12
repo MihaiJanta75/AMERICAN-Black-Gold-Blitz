@@ -39,7 +39,18 @@ export function drawTitle(ctx, s) {
   });
 
   ctx.fillStyle = '#aaa'; ctx.font = Math.min(13, W * 0.025) + 'px monospace';
-  const features = [
+  const isMobile = s.isTouchDevice;
+  const features = isMobile ? [
+    '🕹 Left stick — Move',
+    '🎯 Right stick — Aim & Fire (push past ring for missiles)',
+    '⚡ Right stick + AUTO button — continuous fire',
+    '💨 DASH button — dodge in move direction',
+    '',
+    '⚡ Level Up → 3 Card Choices  |  Spend Oil to Pick Upgrade',
+    '🧠 Hive Mind AI — Commanders, Scouts, Kamikaze, Shield Drones',
+    '🛢 Oil Economy — Shooting costs oil, own rigs to survive',
+    '🏭 Capture & defend oil rigs — enemies raid with purpose',
+  ] : [
     'WASD/Arrows - Move  |  Mouse - Aim  |  Space/LMB - Fire',
     'E/RMB - Homing Missiles  |  Q - Time Warp  |  B - Black Hole',
     'Shift - Dash Dodge  |  F - Auto-Fire  |  P - Pause',
@@ -49,8 +60,6 @@ export function drawTitle(ctx, s) {
     '🛢 Oil Economy — Shooting costs oil, own rigs to survive',
     '🏭 Capture & defend oil rigs — enemies raid with purpose',
     '🌅 Dynamic day/night  |  🔊 Procedural sound',
-    '',
-    'Touch: Left stick = Move | Right stick = Aim + Fire',
   ];
   features.forEach((l, i) => ctx.fillText(l, W / 2, H * 0.36 + i * Math.min(22, W * 0.032)));
 
@@ -64,7 +73,7 @@ export function drawTitle(ctx, s) {
 
   ctx.fillStyle = Math.sin(t * 3) > 0 ? '#ffcc00' : '#ff8800';
   ctx.font = 'bold ' + Math.min(24, W * 0.04) + 'px monospace';
-  ctx.fillText('[ CLICK or TAP to START ]', W / 2, H * 0.92);
+  ctx.fillText(isMobile ? '[ TAP to START ]' : '[ CLICK or TAP to START ]', W / 2, H * 0.92);
 }
 
 export function drawGameOver(ctx, s) {
