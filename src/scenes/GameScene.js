@@ -114,6 +114,20 @@ export default class GameScene extends Phaser.Scene {
 
   soundFn(type, vol) {
     playSound(type, vol, getSettings().soundOn);
+    // Haptic feedback on mobile — shooting and damage feel distinctly different
+    if (this.isTouchDevice && navigator.vibrate) {
+      if (type === 'hit') {
+        // Double-punch: clearly feels like taking a hit
+        navigator.vibrate([50, 30, 50]);
+      } else if (type === 'shoot') {
+        // Short light tap; throttled so rapid-fire weapons don't overwhelm
+        const now = Date.now();
+        if (!this._lastShootHaptic || now - this._lastShootHaptic > 80) {
+          this._lastShootHaptic = now;
+          navigator.vibrate(12);
+        }
+      }
+    }
   }
 
   shutdown() {

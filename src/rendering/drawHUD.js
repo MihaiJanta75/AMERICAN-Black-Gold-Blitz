@@ -393,9 +393,8 @@ export function drawTouchControls(ctx, s, settings, isTouchDevice) {
   const { W, H, player, time } = s;
   const inp = s.input;
 
-  // Zone background overlays (left = move, right = aim/fire)
-  ctx.fillStyle = 'rgba(255,255,255,0.04)'; ctx.fillRect(0, 0, W * 0.4, H);
-  ctx.fillStyle = 'rgba(255,255,255,0.02)'; ctx.fillRect(W * 0.4, 0, W * 0.6, H);
+  // Zone background overlays (left = move, right = aim/fire) — uniform alpha to avoid two-tone effect
+  ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(0, 0, W, H);
 
   // --- Ghost / hint joystick circles (always visible so player knows where to touch) ---
   const ghostL = { x: W * 0.22, y: H * 0.72 };
