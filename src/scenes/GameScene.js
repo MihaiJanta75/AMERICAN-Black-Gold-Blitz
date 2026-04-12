@@ -91,6 +91,7 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this._loadingRemoved = false;
+    this._lastShootHaptic = 0;
 
     // Fallback: remove loading screen after 3s in case postrender never fires
     setTimeout(() => removeLoadingScreen(), 3000);
@@ -140,6 +141,7 @@ export default class GameScene extends Phaser.Scene {
       document.removeEventListener('touchend', this._touchEndHandler);
       document.removeEventListener('touchcancel', this._touchEndHandler);
     }
+    this._lastShootHaptic = 0;
   }
 
   startGame() {
