@@ -162,32 +162,48 @@ export default class GameScene extends Phaser.Scene {
     const PAUSE_BTN_Y = 10;
     const PAUSE_BTN_SIZE = 30;
 
-    for (const t of e.changedTouches) {
-      if (t.clientX > PAUSE_BTN_X && t.clientY < PAUSE_BTN_Y + PAUSE_BTN_SIZE && e.type === 'touchstart') {
-        this.togglePause(); return;
-      }
-      if (t.clientX >= DASH_BTN_X && t.clientX <= DASH_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE && e.type === 'touchstart') {
-        if (s.player.dashCooldown <= 0 && s.input.touchMove.active) {
-          const dashA = Math.atan2(s.input.touchMove.y, s.input.touchMove.x);
-          s.player.dashing = DASH_DURATION;
-          s.player.dashAngle = dashA;
-          s.player.dashCooldown = Math.max(0.5, DASH_COOLDOWN - (s.upgradeStats.dashCooldownBonus || 0));
-          this.soundFn('dash');
-          addScreenFlash(s, '#44ccff', 0.1);
+    // On touchstart, assign each new touch to a joystick role based on its starting position.
+    // We track roles by touch identifier so the left stick can never accidentally shoot.
+    if (e.type === 'touchstart') {
+      for (const t of e.changedTouches) {
+        if (t.clientX > PAUSE_BTN_X && t.clientY < PAUSE_BTN_Y + PAUSE_BTN_SIZE) {
+          this.togglePause(); return;
         }
-        return;
-      }
-      if (t.clientX >= AF_BTN_X && t.clientX <= AF_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE && e.type === 'touchstart') {
-        toggleSetting('autoFire');
-        return;
+        if (t.clientX >= DASH_BTN_X && t.clientX <= DASH_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE) {
+          if (s.player.dashCooldown <= 0 && s.input.touchMove.active) {
+            const dashA = Math.atan2(s.input.touchMove.y, s.input.touchMove.x);
+            s.player.dashing = DASH_DURATION;
+            s.player.dashAngle = dashA;
+            s.player.dashCooldown = Math.max(0.5, DASH_COOLDOWN - (s.upgradeStats.dashCooldownBonus || 0));
+            this.soundFn('dash');
+            addScreenFlash(s, '#44ccff', 0.1);
+          }
+          continue;
+        }
+        if (t.clientX >= AF_BTN_X && t.clientX <= AF_BTN_X + MOBILE_BTN_SIZE && t.clientY > MOBILE_BTN_Y && t.clientY < MOBILE_BTN_Y + MOBILE_BTN_SIZE) {
+          toggleSetting('autoFire');
+          continue;
+        }
+        // Assign touch to move (left half) or aim (right half) role based on start position
+        if (t.clientX < W * 0.5) {
+          if (this._moveTouchId == null) {
+            this._moveTouchId = t.identifier;
+            s.input.joystickCenter = { x: t.clientX, y: t.clientY };
+          }
+        } else {
+          if (this._aimTouchId == null) {
+            this._aimTouchId = t.identifier;
+            s.input.aimJoystickCenter = { x: t.clientX, y: t.clientY };
+          }
+        }
       }
     }
 
+    // Update joystick values from all active touches using their assigned roles
     s.input.touchFire = false;
     s.input.touchMissile = false;
     for (const t of e.touches) {
-      if (t.clientX < W * 0.4) {
-        if (!s.input.joystickCenter) s.input.joystickCenter = { x: t.clientX, y: t.clientY };
+      if (this._moveTouchId !== null && t.identifier === this._moveTouchId) {
         const dx = t.clientX - s.input.joystickCenter.x;
         const dy = t.clientY - s.input.joystickCenter.y;
         const d = Math.hypot(dx, dy);
@@ -196,8 +212,7 @@ export default class GameScene extends Phaser.Scene {
           s.input.touchMove.y = dy / Math.max(d, JOYSTICK_RADIUS);
           s.input.touchMove.active = true;
         }
-      } else {
-        if (!s.input.aimJoystickCenter) s.input.aimJoystickCenter = { x: t.clientX, y: t.clientY };
+      } else if (this._aimTouchId !== null && t.identifier === this._aimTouchId) {
         const dx = t.clientX - s.input.aimJoystickCenter.x;
         const dy = t.clientY - s.input.aimJoystickCenter.y;
         const d = Math.hypot(dx, dy);
@@ -218,21 +233,28 @@ export default class GameScene extends Phaser.Scene {
   handleTouchEnd(e) {
     e.preventDefault();
     const s = this.s;
+    for (const t of e.changedTouches) {
+      if (this._moveTouchId !== null && t.identifier === this._moveTouchId) {
+        this._moveTouchId = null;
+        s.input.touchMove = { x: 0, y: 0, active: false };
+        s.input.joystickCenter = null;
+      } else if (this._aimTouchId !== null && t.identifier === this._aimTouchId) {
+        this._aimTouchId = null;
+        s.input.touchAim = { x: 0, y: 0, active: false };
+        s.input.aimJoystickCenter = null;
+        s.input.touchFire = false;
+        s.input.touchMissile = false;
+      }
+    }
     if (e.touches.length === 0) {
+      this._moveTouchId = null;
+      this._aimTouchId = null;
       s.input.touchMove = { x: 0, y: 0, active: false };
       s.input.touchAim = { x: 0, y: 0, active: false };
       s.input.joystickCenter = null;
       s.input.aimJoystickCenter = null;
       s.input.touchFire = false;
       s.input.touchMissile = false;
-    } else {
-      let hasLeft = false, hasRight = false;
-      for (const t of e.touches) {
-        if (t.clientX < s.W * 0.4) hasLeft = true;
-        else hasRight = true;
-      }
-      if (!hasLeft) { s.input.touchMove = { x: 0, y: 0, active: false }; s.input.joystickCenter = null; }
-      if (!hasRight) { s.input.touchAim = { x: 0, y: 0, active: false }; s.input.aimJoystickCenter = null; s.input.touchFire = false; s.input.touchMissile = false; }
     }
   }
 
@@ -495,17 +517,19 @@ export default class GameScene extends Phaser.Scene {
     const p = s.player;
     const zoom = this.isTouchDevice ? MOBILE_ZOOM : 1.0;
     // With zoom < 1, the viewport covers s.W/zoom × s.H/zoom world units
-    let cx = p.x - s.W / (2 * zoom);
-    let cy = p.y - s.H / (2 * zoom);
+    s.vW = s.W / zoom;
+    s.vH = s.H / zoom;
+    let cx = p.x - s.vW / 2;
+    let cy = p.y - s.vH / 2;
     if (s.input.touchAim.active) {
-      cx += s.input.touchAim.x * (s.W * 0.15) / zoom;
-      cy += s.input.touchAim.y * (s.H * 0.15) / zoom;
+      cx += s.input.touchAim.x * (s.vW * 0.15);
+      cy += s.input.touchAim.y * (s.vH * 0.15);
     } else if (!this.isTouchDevice) {
       cx += (s.input.mouseX - s.W / 2) * 0.12;
       cy += (s.input.mouseY - s.H / 2) * 0.12;
     }
-    s.camera.x = lerp(s.camera.x, clamp(cx, 0, Math.max(0, WORLD_W - s.W / zoom)), 0.08);
-    s.camera.y = lerp(s.camera.y, clamp(cy, 0, Math.max(0, WORLD_H - s.H / zoom)), 0.08);
+    s.camera.x = lerp(s.camera.x, clamp(cx, 0, Math.max(0, WORLD_W - s.vW)), 0.08);
+    s.camera.y = lerp(s.camera.y, clamp(cy, 0, Math.max(0, WORLD_H - s.vH)), 0.08);
   }
 
   /* ===== RENDER ===== */
