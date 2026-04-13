@@ -776,6 +776,19 @@ export function updateEnemies(s, dt, soundFn) {
       if (e.type === 'drone') e.rotorAngle += dt * 10;
       continue;
     }
+    // Unfreeze: restore speed when stun (frost) expires
+    if (e.frosted) {
+      e.frosted = false;
+      if (e.baseSpeed) e.speed = e.baseSpeed;
+    }
+
+    // Poison tick damage
+    if ((e.poisonTimer || 0) > 0) {
+      e.poisonTimer -= dt;
+      const poisonDps = e.poisonDps || 3;
+      e.hp -= poisonDps * dt;
+      if (e.poisonTimer <= 0) { e.poisonTimer = 0; e.poisonDps = 0; }
+    }
 
     const f = FACTIONS[e.faction] || FACTIONS.red;
     // Choose movement target: rig if assigned, else player or last known hive pos

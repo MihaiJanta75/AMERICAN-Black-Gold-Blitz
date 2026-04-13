@@ -656,7 +656,8 @@ function updateCompanions(s, dt, p, soundFn) {
   const offline = p.oil <= 0; // companions go offline when out of oil
 
   // Combined total for orbit angle spacing
-  const total = (us.scoutDrones||0) + (us.combatDrones||0) + (us.shieldDrones||0) + (us.repairDrones||0) + (us.bomberDrones||0);
+  const total = (us.scoutDrones||0) + (us.combatDrones||0) + (us.shieldDrones||0) + (us.repairDrones||0) + (us.bomberDrones||0)
+              + (us.gunshipDrones||0) + (us.fighterDrones||0) + (us.sniperDrones||0) + (us.mortarDrones||0);
   if (total === 0) return;
 
   let idx = 0;
@@ -722,6 +723,96 @@ function updateCompanions(s, dt, p, soundFn) {
         s.bullets.push({ x: ox, y: oy, vx: Math.cos(angle({ x: ox, y: oy }, target))*3, vy: Math.sin(angle({ x: ox, y: oy }, target))*3, life: 1.5, damage: 40, crit: false, pierce: 0, isRocket: true, rocketRadius: 60 });
       }
       us.bomberDroneTimers[i] = 3.5; // fires every 3.5s
+    }
+    idx++;
+  }
+
+  // Mini Gunships — helicopter allies, triple burst 25 dmg, 300px range (costs 1.0 oil/s)
+  for (let i = 0; i < (us.gunshipDrones||0); i++) {
+    if (offline) { idx++; continue; }
+    if (!us.gunshipTimers) us.gunshipTimers = [];
+    if (us.gunshipTimers[i] === undefined) us.gunshipTimers[i] = 0;
+    us.gunshipTimers[i] = (us.gunshipTimers[i]||0) - dt;
+    const oa = s.time * 1.8 + (idx / total) * Math.PI * 2;
+    const ox = p.x + Math.cos(oa) * 78;
+    const oy = p.y + Math.sin(oa) * 78;
+    if (us.gunshipTimers[i] <= 0) {
+      const target = findNearestEnemy(s, { x: ox, y: oy });
+      if (target && dist({ x: ox, y: oy }, target) < 300) {
+        const ta = angle({ x: ox, y: oy }, target);
+        // Triple burst: 3 bullets in a tight fan
+        for (let b = -1; b <= 1; b++) {
+          const ba = ta + b * 0.12;
+          s.bullets.push({ x: ox, y: oy, vx: Math.cos(ba)*10, vy: Math.sin(ba)*10, life: 0.9, damage: 25, crit: false, pierce: 0 });
+        }
+      }
+      us.gunshipTimers[i] = 1.2; // fires every 1.2s
+    }
+    idx++;
+  }
+
+  // Fighter Escorts — plane allies, strafing run 5 bullets 30 dmg, 360px range (costs 1.4 oil/s)
+  for (let i = 0; i < (us.fighterDrones||0); i++) {
+    if (offline) { idx++; continue; }
+    if (!us.fighterTimers) us.fighterTimers = [];
+    if (us.fighterTimers[i] === undefined) us.fighterTimers[i] = 0;
+    us.fighterTimers[i] = (us.fighterTimers[i]||0) - dt;
+    const oa = s.time * 2.5 + (idx / total) * Math.PI * 2;
+    const ox = p.x + Math.cos(oa) * 90;
+    const oy = p.y + Math.sin(oa) * 90;
+    if (us.fighterTimers[i] <= 0) {
+      const target = findNearestEnemy(s, { x: ox, y: oy });
+      if (target && dist({ x: ox, y: oy }, target) < 360) {
+        const ta = angle({ x: ox, y: oy }, target);
+        // Strafing run: 5 bullets spread slightly
+        for (let b = 0; b < 5; b++) {
+          const delay = b * 0.04;
+          const ba = ta + (b - 2) * 0.08;
+          s.bullets.push({ x: ox, y: oy, vx: Math.cos(ba)*12, vy: Math.sin(ba)*12, life: 1.0 - delay, damage: 30, crit: false, pierce: 1 });
+        }
+      }
+      us.fighterTimers[i] = 2.2; // strafing run every 2.2s
+    }
+    idx++;
+  }
+
+  // Sniper Drones — precision shot 80 dmg, 380px range (costs 0.6 oil/s)
+  for (let i = 0; i < (us.sniperDrones||0); i++) {
+    if (offline) { idx++; continue; }
+    if (!us.sniperTimers) us.sniperTimers = [];
+    if (us.sniperTimers[i] === undefined) us.sniperTimers[i] = 0;
+    us.sniperTimers[i] = (us.sniperTimers[i]||0) - dt;
+    const oa = s.time * 1.2 + (idx / total) * Math.PI * 2;
+    const ox = p.x + Math.cos(oa) * 65;
+    const oy = p.y + Math.sin(oa) * 65;
+    if (us.sniperTimers[i] <= 0) {
+      const target = findNearestEnemy(s, { x: ox, y: oy });
+      if (target && dist({ x: ox, y: oy }, target) < 380) {
+        const ta = angle({ x: ox, y: oy }, target);
+        s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta)*16, vy: Math.sin(ta)*16, life: 0.8, damage: 80, crit: false, pierce: 2 });
+      }
+      us.sniperTimers[i] = 2.8; // slow precision shot every 2.8s
+    }
+    idx++;
+  }
+
+  // Mortar Drones — AoE bomb 50 dmg 60px blast, 300px range (costs 0.9 oil/s)
+  for (let i = 0; i < (us.mortarDrones||0); i++) {
+    if (offline) { idx++; continue; }
+    if (!us.mortarTimers) us.mortarTimers = [];
+    if (us.mortarTimers[i] === undefined) us.mortarTimers[i] = 0;
+    us.mortarTimers[i] = (us.mortarTimers[i]||0) - dt;
+    const oa = s.time * 1.6 + (idx / total) * Math.PI * 2;
+    const ox = p.x + Math.cos(oa) * 75;
+    const oy = p.y + Math.sin(oa) * 75;
+    if (us.mortarTimers[i] <= 0) {
+      const target = findNearestEnemy(s, { x: ox, y: oy });
+      if (target && dist({ x: ox, y: oy }, target) < 300) {
+        const ta = angle({ x: ox, y: oy }, target);
+        const spd = 4;
+        s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta)*spd, vy: Math.sin(ta)*spd, life: 2.2, damage: 50, crit: false, pierce: 0, isRocket: true, rocketRadius: 60 });
+      }
+      us.mortarTimers[i] = 4.0; // fires every 4s
     }
     idx++;
   }

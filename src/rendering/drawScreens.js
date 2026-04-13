@@ -64,7 +64,7 @@ export function drawTitle(ctx, s) {
   features.forEach((l, i) => ctx.fillText(l, W / 2, H * 0.36 + i * Math.min(22, W * 0.032)));
 
   ctx.fillStyle = '#aa44ff'; ctx.font = 'bold ' + Math.min(14, W * 0.025) + 'px monospace';
-  ctx.fillText('18 UPGRADES + SYNERGY EVOLUTIONS + STAT BUILDS', W / 2, H * 0.73);
+  ctx.fillText('27 UPGRADES + COMPANIONS + SYNERGY EVOLUTIONS + INSANE COMBOS', W / 2, H * 0.73);
 
   if (highScore > 0) {
     ctx.fillStyle = '#ffcc00'; ctx.font = 'bold ' + Math.min(14, W * 0.025) + 'px monospace';
@@ -173,7 +173,7 @@ export function drawUpgradeScreen(ctx, s) {
   for (let i = 0; i < statChoices.length; i++) {
     const key = statChoices[i];
     if (!key || !UPGRADES[key]) continue;
-    drawUpgradeCard(ctx, key, startX + i * (cardW + gap), startY, cardW, cardH, s, mouseX, mouseY, false, t);
+    drawUpgradeCard(ctx, key, startX + i * (cardW + gap), startY, cardW, cardH, s, mouseX, mouseY, false, t, false, s.pendingUpgradeCard === key);
   }
 
   // Draw weapon card — with golden border label
@@ -182,7 +182,7 @@ export function drawUpgradeScreen(ctx, s) {
     const wx = startX + wIdx * (cardW + gap);
     ctx.fillStyle = '#ffaa00'; ctx.font = 'bold ' + Math.min(10, W * 0.018) + 'px monospace'; ctx.textAlign = 'center';
     ctx.fillText('⚔ WEAPON SLOT ⚔', wx + cardW / 2, startY - 10);
-    drawUpgradeCard(ctx, weaponKey, wx, startY, cardW, cardH, s, mouseX, mouseY, false, t, true);
+    drawUpgradeCard(ctx, weaponKey, wx, startY, cardW, cardH, s, mouseX, mouseY, false, t, true, s.pendingUpgradeCard === weaponKey);
   }
 
   const synH = Math.min(90, H * 0.14);
@@ -193,7 +193,7 @@ export function drawUpgradeScreen(ctx, s) {
     ctx.fillStyle = '#cc88ff'; ctx.font = 'bold ' + Math.min(11, W * 0.02) + 'px monospace'; ctx.textAlign = 'center';
     ctx.fillText('⬇ SYNERGY EVOLUTION ⬇', W / 2, nextSpecialY - 8);
     const synW = Math.min(340, W * 0.50);
-    drawUpgradeCard(ctx, synergyKey, (W - synW) / 2, nextSpecialY, synW, synH, s, mouseX, mouseY, true, t);
+    drawUpgradeCard(ctx, synergyKey, (W - synW) / 2, nextSpecialY, synW, synH, s, mouseX, mouseY, true, t, false, s.pendingUpgradeCard === synergyKey);
     nextSpecialY += synH + 10;
   }
 
@@ -202,7 +202,7 @@ export function drawUpgradeScreen(ctx, s) {
     ctx.fillStyle = '#00ffcc'; ctx.font = 'bold ' + Math.min(11, W * 0.02) + 'px monospace'; ctx.textAlign = 'center';
     ctx.fillText('🧬 MUTATION READY 🧬', W / 2, nextSpecialY - 8);
     const mutW = Math.min(340, W * 0.50);
-    drawMutationCard(ctx, mutationKey, (W - mutW) / 2, nextSpecialY, mutW, synH, s, mouseX, mouseY);
+    drawMutationCard(ctx, mutationKey, (W - mutW) / 2, nextSpecialY, mutW, synH, s, mouseX, mouseY, s.pendingUpgradeCard === mutationKey);
   }
 
   // Skip button
@@ -238,7 +238,7 @@ function wrapText(ctx, text, x, y, maxWidth, lineH) {
   return lineY;
 }
 
-function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSynergy, t, isWeapon) {
+function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSynergy, t, isWeapon, isPending) {
   const up = UPGRADES[key];
   if (!up) return;
   const lvl = s.upgradeLevels[key] || 0;
@@ -314,10 +314,21 @@ function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSy
   }
 
   // Hover glow
-  if (isHovered && canAfford) {
-    ctx.fillStyle = isWeapon ? 'rgba(255,180,0,0.10)' : rarityColor + '14';
+  if ((isHovered || isPending) && canAfford) {
+    ctx.fillStyle = isPending ? (isWeapon ? 'rgba(255,220,0,0.22)' : rarityColor + '30') : (isWeapon ? 'rgba(255,180,0,0.10)' : rarityColor + '14');
     if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cx, cy, cardW, cardH, 14); ctx.fill(); }
     else ctx.fillRect(cx, cy, cardW, cardH);
+  }
+
+  // Pending confirm glow (pulsing green outline)
+  if (isPending && canAfford) {
+    ctx.strokeStyle = '#44ff88';
+    ctx.lineWidth = 3.5;
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.5 + Math.abs(Math.sin(t * 6)) * 0.5;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cx - 2, cy - 2, cardW + 4, cardH + 4, 15); ctx.stroke(); }
+    else ctx.strokeRect(cx - 2, cy - 2, cardW + 4, cardH + 4);
+    ctx.globalAlpha = 1;
   }
 
   ctx.textAlign = 'center';
@@ -338,7 +349,8 @@ function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSy
     ctx.fillText(up.desc, cx + cardW / 2 + cardW * 0.06, cy + cardH * 0.52);
     ctx.font = 'bold ' + Math.min(11, cardW * 0.03) + 'px monospace';
     ctx.fillStyle = canAfford ? '#44ff88' : '#ff4444';
-    ctx.fillText('⛽ ' + cost + ' OIL  |  TAP TO EVOLVE', cx + cardW / 2 + cardW * 0.06, cy + cardH * 0.75);
+    const synergyPrompt = isPending ? '✓ CONFIRM EVOLVE' : '⛽ ' + cost + ' OIL  |  TAP TO EVOLVE';
+    ctx.fillText(synergyPrompt, cx + cardW / 2 + cardW * 0.06, cy + cardH * 0.75);
     return;
   }
 
@@ -416,13 +428,18 @@ function drawUpgradeCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isSy
   // ── Tap/click prompt ──────────────────────────────────────────────────────
   const promptSize = Math.max(9, Math.min(12, cardW * 0.055));
   ctx.font = 'bold ' + promptSize + 'px monospace';
-  ctx.fillStyle = canAfford
-    ? (isLegendary ? rarityColor + 'cc' : up.color + '99')
-    : '#553322';
-  ctx.fillText(canAfford ? '[ TAP TO PICK ]' : '[ LOW FUNDS ]', cx + cardW / 2, cy + cardH - 18);
+  if (isPending && canAfford) {
+    ctx.fillStyle = '#44ff88';
+    ctx.fillText('✓ TAP TO CONFIRM', cx + cardW / 2, cy + cardH - 18);
+  } else {
+    ctx.fillStyle = canAfford
+      ? (isLegendary ? rarityColor + 'cc' : up.color + '99')
+      : '#553322';
+    ctx.fillText(canAfford ? '[ TAP TO PICK ]' : '[ LOW FUNDS ]', cx + cardW / 2, cy + cardH - 18);
+  }
 }
 
-function drawMutationCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY) {
+function drawMutationCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY, isPending) {
   const mut = MUTATIONS[key];
   if (!mut) return;
   const cost = 150;
@@ -479,8 +496,14 @@ function drawMutationCard(ctx, key, cx, cy, cardW, cardH, s, mouseX, mouseY) {
   ctx.font = 'bold ' + Math.min(11, cardW * 0.032) + 'px monospace';
   ctx.fillStyle = canAfford ? '#44ff88' : '#ff4444';
   ctx.fillText('EVOLVE: ' + cost + ' OIL', cx + cardW / 2 + 10, cy + cardH * 0.75);
-  ctx.fillStyle = canAfford ? (mut.color + '99') : '#334444';
-  ctx.fillText(canAfford ? '[ MUTATE — CLICK ]' : '[ LOW FUNDS ]', cx + cardW / 2 + 10, cy + cardH * 0.9);
+  ctx.fillStyle = isPending && canAfford ? '#44ff88' : (canAfford ? (mut.color + '99') : '#334444');
+  ctx.fillText(isPending && canAfford ? '✓ TAP TO CONFIRM' : (canAfford ? '[ MUTATE — CLICK ]' : '[ LOW FUNDS ]'), cx + cardW / 2 + 10, cy + cardH * 0.9);
+  if (isPending && canAfford) {
+    ctx.strokeStyle = '#44ff88'; ctx.lineWidth = 3; ctx.setLineDash([]);
+    ctx.globalAlpha = 0.5 + Math.abs(Math.sin(t * 6)) * 0.5;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(cx - 2, cy - 2, cardW + 4, cardH + 4, 13); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+  }
 }
 
 export function drawPauseScreen(ctx, s, settings) {

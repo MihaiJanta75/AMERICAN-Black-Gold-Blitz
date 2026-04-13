@@ -194,6 +194,11 @@ export function updateCombat(s, dt, soundFn) {
           if (dist(nz, e) < nz.radius + e.radius) {
             e.hp -= nz.dps * 0.4; // 0.4s tick
             onEnemyHit(s, e);
+            // Poison Field synergy: napalm zones also apply poison
+            if (s.upgradeStats.hasPoisonField) {
+              e.poisonTimer = Math.max(e.poisonTimer || 0, 2.0);
+              e.poisonDps = Math.max(e.poisonDps || 0, s.upgradeStats.poisonFieldDps || 6);
+            }
           }
         }
         // Inferno barrage: spread to nearby enemies
@@ -408,6 +413,19 @@ export function updateCombat(s, dt, soundFn) {
     soundFn('explosion', e.isBoss ? 0.5 : 0.3);
     s.totalDamageDealt += e.maxHp;
 
+    // Rampage Nova synergy: kills during RAMPAGE explode in AoE
+    if (s.upgradeStats.hasRampageNova && player.rampageActive) {
+      const novaR = s.upgradeStats.rampageNovaRadius || 60;
+      for (const ne of s.enemies) {
+        if (ne === e) continue;
+        if (dist(e, ne) < novaR) {
+          ne.hp -= 35;
+          spawnExplosion(s, ne.x, ne.y, '#ff4400', 4);
+        }
+      }
+      spawnExplosion(s, e.x, e.y, '#ff6600', 10);
+    }
+
     if (e.isBoss) s.totalKills.boss++;
     else s.totalKills[e.type] = (s.totalKills[e.type] || 0) + 1;
 
@@ -586,6 +604,66 @@ export function updateCombat(s, dt, soundFn) {
 
         // Chain lightning
         applyChainLightning(s, b.x, b.y, hitDmg, j);
+
+        // Frost Rounds: slow enemy
+        if (s.upgradeLevels['frost_rounds'] > 0) {
+          // Save baseSpeed before modifying, so unfreeze can restore correctly
+          if (!e.baseSpeed) e.baseSpeed = e.speed;
+          e.stunTimer = Math.max(e.stunTimer || 0, s.upgradeStats.frostRoundsDuration || 1.5);
+          e.frosted = true;
+          e.speed = e.baseSpeed * 0.7;
+          spawnParticle(s, e.x, e.y, 0, -0.5, 0.3, 4, '#88ddff', 'circle');
+          // Shatter Strike synergy: frozen enemies take bonus damage
+          if (s.upgradeStats.hasShatterStrike) {
+            e.hp -= hitDmg * ((s.upgradeStats.shatterStrikeMult || 1.80) - 1);
+            s.totalDamageDealt += hitDmg * ((s.upgradeStats.shatterStrikeMult || 1.80) - 1);
+          }
+        }
+
+        // Armor Shred: reduce enemy armor per hit
+        if (s.upgradeLevels['armor_shred'] > 0) {
+          const maxShred = s.upgradeStats.armorShredMax || 0.40;
+          e.armorShred = Math.min(maxShred, (e.armorShred || 0) + (s.upgradeStats.armorShredPerHit || 0.08));
+          // Toxic Shred synergy: poisoned enemies get extra armor penalty
+          if (s.upgradeStats.hasToxicShred && (e.poisonTimer || 0) > 0) {
+            e.armorShred = Math.min(maxShred + 0.20, e.armorShred + (s.upgradeStats.toxicShredArmor || 0.15));
+          }
+        }
+
+        // Toxic Rounds: apply poison on hit
+        if (s.upgradeLevels['toxic_rounds'] > 0) {
+          e.poisonTimer = Math.max(e.poisonTimer || 0, s.upgradeStats.toxicRoundsDuration || 2.0);
+          e.poisonDps = s.upgradeStats.toxicRoundsDps || 3;
+        }
+
+        // Echo Strike: every Nth bullet fires a duplicate
+        if (s.upgradeLevels['echo_strike'] > 0) {
+          s.upgradeStats.echoStrikeCount = ((s.upgradeStats.echoStrikeCount || 0) + 1);
+          const period = s.upgradeStats.echoStrikePeriod || 3;
+          if (s.upgradeStats.echoStrikeCount >= period) {
+            s.upgradeStats.echoStrikeCount = 0;
+            // Fire a duplicate bullet in same direction
+            const echoB = { x: b.x, y: b.y, vx: b.vx, vy: b.vy, life: 0.6, damage: b.damage * 0.8, pierce: b.pierce || 0, crit: false };
+            s.bullets.push(echoB);
+            spawnParticle(s, b.x, b.y, 0, 0, 0.2, 6, '#ff88ff', 'circle');
+            // Echo Chain synergy: echo shot also arcs chain lightning
+            if (s.upgradeStats.hasEchoChain) {
+              const saved = s.upgradeStats.chainCount;
+              s.upgradeStats.chainCount = s.upgradeStats.echoChainCount || 1;
+              applyChainLightning(s, b.x, b.y, b.damage * 0.5, j);
+              s.upgradeStats.chainCount = saved;
+            }
+            // Frost Echo synergy: echo shot leaves frost zone
+            if (s.upgradeStats.hasFrostEcho) {
+              for (const fe of s.enemies) {
+                if (dist(b, fe) < 60) {
+                  fe.stunTimer = Math.max(fe.stunTimer || 0, s.upgradeStats.frostEchoDuration || 2.0);
+                  fe.frosted = true;
+                }
+              }
+            }
+          }
+        }
 
         // Napalm: leave fire zone on impact
         if (s.upgradeStats.hasNapalm) {

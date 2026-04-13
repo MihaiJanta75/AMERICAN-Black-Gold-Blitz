@@ -64,6 +64,7 @@ export const state = {
   upgradeStats: {},
   upgradeLevels: {},
   upgradeChoices: [],
+  pendingUpgradeCard: null,   // key of card awaiting second-tap confirmation
   totalUpgrades: 0,
   bountyCards: [],       // upgrade keys waiting to be awarded
   isBountyUpgrade: false,
@@ -197,6 +198,10 @@ export function getReloadTime(s) {
   if (s.upgradeStats.overchargeBonus > 0 && s.player.oil / getMaxOil(s) >= 0.8) {
     base *= (1 - s.upgradeStats.overchargeBonus);
   }
+  // Rampage Amp: bonus fire rate during RAMPAGE
+  if (s.upgradeStats.rampageAmpFire > 0 && s.player.rampageActive) {
+    base *= (1 - s.upgradeStats.rampageAmpFire);
+  }
   return Math.max(0.04, base);
 }
 
@@ -219,6 +224,10 @@ export function getBulletDamage(s) {
   if (s.player.revengeBuff > 0) dmg *= 1.50;
   // Warcry wildcard: stacking bonus per kill
   if (s.upgradeStats.hasWarcry) dmg *= (s.upgradeStats.warcryDamageMult || 1);
+  // Rampage Amp card: bonus dmg during RAMPAGE
+  if (s.upgradeStats.rampageAmpDmg > 0 && s.player.rampageActive) {
+    dmg *= (1 + s.upgradeStats.rampageAmpDmg);
+  }
   // Railgun mutation: bullets deal 2× damage
   if (s.upgradeStats.mutations?.railgun) dmg *= 2.0;
   // Blood Tithe chaos card bonus
@@ -417,6 +426,25 @@ export function resetUpgrades(s) {
     hasOilVortex: false,
     hasShockNova: false,
     hasWarMachine: false,
+    // New base cards
+    frostRoundsDuration: 1.5,
+    armorShredPerHit: 0.08, armorShredMax: 0.40,
+    toxicRoundsDps: 3, toxicRoundsDuration: 2.0,
+    echoStrikePeriod: 3, echoStrikeCount: 0,
+    rampageAmpDmg: 0, rampageAmpFire: 0,
+    // New synergy flags
+    hasCryoNova: false, cryoNovaFreeze: 2.0,
+    hasShatterStrike: false, shatterStrikeMult: 1.80,
+    hasPoisonField: false, poisonFieldDps: 6,
+    hasEchoChain: false, echoChainCount: 1,
+    hasToxicShred: false, toxicShredArmor: 0.15,
+    hasFrostEcho: false, frostEchoDuration: 2.0,
+    hasRampageNova: false, rampageNovaRadius: 60,
+    // New companion types
+    gunshipDrones: 0, gunshipTimers: [],
+    fighterDrones: 0, fighterTimers: [],
+    sniperDrones: 0, sniperTimers: [],
+    mortarDrones: 0, mortarTimers: [],
     // Wildcard flags
     wildBerserker: false,
     wildGlassCannon: false,
@@ -490,7 +518,9 @@ function _extraPierce(us) { return (us.pierceLvl||0) + (us.statPierceLvl||0); }
 function _companionDrain(us) {
   return (us.scoutDrones||0) * 0.3 + (us.combatDrones||0) * 0.6 +
          (us.shieldDrones||0) * 0.8 + (us.repairDrones||0) * 0.5 +
-         (us.bomberDrones||0) * 1.0;
+         (us.bomberDrones||0) * 1.0 + (us.gunshipDrones||0) * 1.0 +
+         (us.fighterDrones||0) * 1.4 + (us.sniperDrones||0) * 0.6 +
+         (us.mortarDrones||0) * 0.9;
 }
 
 const UPGRADE_APPLY = {
@@ -587,6 +617,25 @@ const UPGRADE_APPLY = {
   oil_vortex:        (l, us) => { us.hasOilVortex = true; us.oilVortexRadius = BLACK_HOLE_RADIUS * 1.5 + (l - 1) * 50; },
   shock_nova:        (l, us) => { us.hasShockNova = true; us.shockNovaRadius = 150 + (l - 1) * 50; },
   war_machine:       (_l, us) => { us.hasWarMachine = true; },
+  // ── NEW BASE CARDS ─────────────────────────────────────────────────────────
+  frost_rounds:      (l, us) => { us.frostRoundsDuration = 1.5 + (l - 1) * 0.5; },
+  armor_shred:       (l, us) => { us.armorShredPerHit = 0.08 + (l - 1) * 0.02; us.armorShredMax = Math.min(0.80, 0.40 + (l - 1) * 0.08); },
+  toxic_rounds:      (l, us) => { us.toxicRoundsDuration = 2.0 + (l - 1) * 1.0; },
+  echo_strike:       (l, us) => { us.echoStrikePeriod = Math.max(2, 3 - (l - 1)); us.echoStrikeCount = 0; },
+  rampage_amp:       (l, us) => { us.rampageAmpDmg = 0.25 + (l - 1) * 0.15; us.rampageAmpFire = 0.20; },
+  // ── NEW SYNERGIES ──────────────────────────────────────────────────────────
+  cryo_nova:      (l, us) => { us.hasCryoNova = true; us.cryoNovaFreeze = 2.0 + (l - 1) * 0.5; },
+  shatter_strike: (l, us) => { us.hasShatterStrike = true; us.shatterStrikeMult = 1.80 + (l - 1) * 0.30; },
+  poison_field:   (l, us) => { us.hasPoisonField = true; us.poisonFieldDps = 6 * (1 + (l - 1) * 0.5); },
+  echo_chain:     (l, us) => { us.hasEchoChain = true; us.echoChainCount = l; },
+  toxic_shred:    (l, us) => { us.hasToxicShred = true; us.toxicShredArmor = 0.15 + (l - 1) * 0.05; },
+  frost_echo:     (l, us) => { us.hasFrostEcho = true; us.frostEchoDuration = 2.0 + (l - 1) * 1.0; },
+  rampage_nova:   (l, us) => { us.hasRampageNova = true; us.rampageNovaRadius = 60 + (l - 1) * 20; },
+  // ── NEW COMPANION CARDS ────────────────────────────────────────────────────
+  companion_gunship: (l, us) => { us.gunshipDrones = l; us.gunshipTimers = Array.from({length:l},()=>0); us.companionOilDrain = _companionDrain(us); },
+  companion_fighter: (l, us) => { us.fighterDrones = l; us.fighterTimers = Array.from({length:l},()=>0); us.companionOilDrain = _companionDrain(us); },
+  companion_sniper:  (l, us) => { us.sniperDrones  = l; us.sniperTimers  = Array.from({length:l},()=>0); us.companionOilDrain = _companionDrain(us); },
+  companion_mortar:  (l, us) => { us.mortarDrones  = l; us.mortarTimers  = Array.from({length:l},()=>0); us.companionOilDrain = _companionDrain(us); },
   // ── WEAPON CARDS (new) ──────────────────────────────────────────────────────
   weapon_chain_gun:   (l, us) => { us.activeWeapon = 'chain_gun';   if(!us.weaponLevels) us.weaponLevels={}; us.weaponLevels.chain_gun   = l; },
   weapon_plasma:      (l, us) => { us.activeWeapon = 'plasma';      if(!us.weaponLevels) us.weaponLevels={}; us.weaponLevels.plasma      = l; },
@@ -616,13 +665,12 @@ export function getUpgradeChoices(s) {
   // Rarity weights: common=60, rare=25, legendary=10
   const RARITY_WEIGHT = { common: 60, rare: 25, legendary: 10 };
 
-  // Non-weapon, non-companion cards that haven't hit their maxLevel
+  // Non-weapon cards that haven't hit their maxLevel
   // Synergies are offered separately; one-time cards excluded after first pick
   const statPool = Object.keys(UPGRADES).filter(k => {
     const up = UPGRADES[k];
     if (up.synergy) return false;          // offered via synergy slot
     if (up.category === 'weapon') return false;
-    if (up.category === 'companion') return false;
     // Cards that have hit their maxLevel don't appear again
     if ((s.upgradeLevels[k] || 0) >= (up.maxLevel || 1)) return false;
     return true;
@@ -679,6 +727,7 @@ export function getUpgradeCost(key, currentLevel) {
   if (!up) return 0;
   if (up.synergy) return 100;
   if (up.category === 'wildcard') return 80;  // wildcards cost flat 80 — painful but worth it
+  if (up.category === 'companion') return 60 + currentLevel * 20; // one-time pick cost: 60/80/100+; oil/s drain is in companionOilDrain
   if (up.rarity === 'legendary') return 80;
   if (up.rarity === 'rare' || up.rare) return 120;
   return UPGRADE_OIL_COST_BASE + currentLevel * 40;  // 50 / 90 / 130 for levels 1-3
@@ -944,6 +993,8 @@ export function resetGameState(s) {
   s.killFeed = [];
   s.bountyCards = [];
   s.isBountyUpgrade = false;
+  s.upgradeChoices = [];
+  s.pendingUpgradeCard = null;
   s.blackHoleCooldown = 0;
   s.timeWarpCooldown = 0;
   s.lastAbilityTime = -99;

@@ -106,6 +106,10 @@ export function drawCompanions(ctx, s) {
     { key: 'shieldDrones',  count: us.shieldDrones  || 0, color: '#8844ff', innerColor: '#cc99ff', radius: 30, speed: 3.5, size: 6  },
     { key: 'repairDrones',  count: us.repairDrones  || 0, color: '#44ff88', innerColor: '#aaffcc', radius: 48, speed: 2.6, size: 6  },
     { key: 'bomberDrones',  count: us.bomberDrones  || 0, color: '#ff8800', innerColor: '#ffcc44', radius: 70, speed: 1.8, size: 8  },
+    { key: 'gunshipDrones', count: us.gunshipDrones || 0, color: '#ff8844', innerColor: '#ffcc88', radius: 78, speed: 1.8, size: 9, shape: 'gunship' },
+    { key: 'fighterDrones', count: us.fighterDrones || 0, color: '#44aaff', innerColor: '#aaddff', radius: 90, speed: 2.5, size: 10, shape: 'fighter' },
+    { key: 'sniperDrones',  count: us.sniperDrones  || 0, color: '#88ff44', innerColor: '#ccff88', radius: 65, speed: 1.2, size: 6  },
+    { key: 'mortarDrones',  count: us.mortarDrones  || 0, color: '#cc6600', innerColor: '#ffaa44', radius: 75, speed: 1.6, size: 8  },
   ];
 
   // Compute a global slot offset so different companion types orbit at different angles
@@ -121,20 +125,51 @@ export function drawCompanions(ctx, s) {
 
       const alpha = oilOk ? 1.0 : 0.25;
 
-      // Outer glow ring
-      ctx.globalAlpha = alpha * 0.18;
-      ctx.fillStyle = cfg.color;
-      ctx.beginPath(); ctx.arc(ox, oy, cfg.size + 5, 0, Math.PI * 2); ctx.fill();
+      if (cfg.shape === 'gunship') {
+        // Mini gunship: small helicopter silhouette
+        ctx.save();
+        ctx.translate(ox, oy);
+        ctx.rotate(oa + Math.PI / 2);
+        ctx.globalAlpha = alpha * 0.85;
+        ctx.fillStyle = cfg.color;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, cfg.size, cfg.size * 0.55, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Rotor blade
+        ctx.globalAlpha = alpha * 0.5;
+        ctx.strokeStyle = cfg.innerColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(-cfg.size * 1.4, 0); ctx.lineTo(cfg.size * 1.4, 0); ctx.stroke();
+        ctx.restore();
+      } else if (cfg.shape === 'fighter') {
+        // Fighter plane: swept-wing silhouette
+        ctx.save();
+        ctx.translate(ox, oy);
+        ctx.rotate(oa + Math.PI / 2);
+        ctx.globalAlpha = alpha * 0.85;
+        ctx.fillStyle = cfg.color;
+        ctx.beginPath();
+        ctx.moveTo(0, -cfg.size);
+        ctx.lineTo(cfg.size * 1.3, cfg.size * 0.5);
+        ctx.lineTo(0, cfg.size * 0.2);
+        ctx.lineTo(-cfg.size * 1.3, cfg.size * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      } else {
+        // Default circle drone
+        ctx.globalAlpha = alpha * 0.18;
+        ctx.fillStyle = cfg.color;
+        ctx.beginPath(); ctx.arc(ox, oy, cfg.size + 5, 0, Math.PI * 2); ctx.fill();
 
-      // Body
-      ctx.globalAlpha = alpha * 0.85;
-      ctx.fillStyle = cfg.color;
-      ctx.beginPath(); ctx.arc(ox, oy, cfg.size, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = alpha * 0.85;
+        ctx.fillStyle = cfg.color;
+        ctx.beginPath(); ctx.arc(ox, oy, cfg.size, 0, Math.PI * 2); ctx.fill();
 
-      // Inner bright core
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = cfg.innerColor;
-      ctx.beginPath(); ctx.arc(ox, oy, cfg.size * 0.45, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = cfg.innerColor;
+        ctx.beginPath(); ctx.arc(ox, oy, cfg.size * 0.45, 0, Math.PI * 2); ctx.fill();
+      }
 
       // Orbit trail
       ctx.globalAlpha = alpha * 0.10;

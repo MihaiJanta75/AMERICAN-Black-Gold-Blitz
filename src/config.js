@@ -155,11 +155,22 @@ export const UPGRADES = {
   weapon_laser_rifle: { name: "Laser Rifle",      desc: "Ultra-fast piercing beam, 2.5× dmg, slow fire. Stack: +1 pierce, +12% dmg", icon: "🔆", color: "#00ffcc", category: 'weapon', maxLevel: 99, rarity: 'legendary' },
 
   // ── COMPANION CARDS (drone allies, sustained by oil) ──────────────────────
-  companion_scout:  { name: "Scout Drone",   desc: "+1 scout drone (0.3 oil/s). Shoots enemies in 280px", icon: "🤖", color: "#44ccff", category: 'companion', maxLevel: 99, rarity: 'common' },
-  companion_combat: { name: "Combat Drone",  desc: "+1 combat drone (0.6 oil/s). Homing shots in 320px", icon: "🤖", color: "#ff6644", category: 'companion', maxLevel: 99, rarity: 'rare' },
-  companion_shield: { name: "Shield Drone",  desc: "+1 shield drone (0.8 oil/s). Absorbs 1 hit every 8s", icon: "🤖", color: "#aa44ff", category: 'companion', maxLevel: 99, rarity: 'rare' },
-  companion_repair: { name: "Repair Drone",  desc: "+1 repair drone (0.5 oil/s). Restores +1.5 oil/s passively", icon: "🤖", color: "#44ff88", category: 'companion', maxLevel: 99, rarity: 'rare' },
-  companion_bomber: { name: "Bomber Drone",  desc: "+1 bomber drone (1.0 oil/s). Drops 40-dmg AoE bombs", icon: "🤖", color: "#ffaa00", category: 'companion', maxLevel: 99, rarity: 'legendary' },
+  companion_scout:   { name: "Scout Drone",      desc: "+1 scout drone (costs 0.3 oil/s). Orbits & shoots in 280px",            icon: "🤖", color: "#44ccff", category: 'companion', maxLevel: 99, rarity: 'common' },
+  companion_combat:  { name: "Combat Drone",     desc: "+1 combat drone (costs 0.6 oil/s). Fires homing shots in 320px",        icon: "🤖", color: "#ff6644", category: 'companion', maxLevel: 99, rarity: 'rare' },
+  companion_shield:  { name: "Shield Drone",     desc: "+1 shield drone (costs 0.8 oil/s). Absorbs 1 hit every 8s",             icon: "🤖", color: "#aa44ff", category: 'companion', maxLevel: 99, rarity: 'rare' },
+  companion_repair:  { name: "Repair Drone",     desc: "+1 repair drone (costs 0.5 oil/s). Restores +1.5 oil/s passively",      icon: "🤖", color: "#44ff88", category: 'companion', maxLevel: 99, rarity: 'rare' },
+  companion_bomber:  { name: "Bomber Drone",     desc: "+1 bomber drone (costs 1.0 oil/s). Drops 40-dmg AoE bombs every 3.5s", icon: "🤖", color: "#ffaa00", category: 'companion', maxLevel: 99, rarity: 'legendary' },
+  companion_gunship: { name: "Mini Gunship",     desc: "+1 gunship ally (costs 1.0 oil/s). Fires triple burst 25 dmg in 300px", icon: "🚁", color: "#ff8844", category: 'companion', maxLevel: 5,  rarity: 'rare' },
+  companion_fighter: { name: "Fighter Escort",   desc: "+1 fighter ally (costs 1.4 oil/s). Strafing run: 5×30 dmg in 360px",   icon: "✈", color: "#44aaff", category: 'companion', maxLevel: 5,  rarity: 'legendary' },
+  companion_sniper:  { name: "Sniper Drone",     desc: "+1 sniper drone (costs 0.6 oil/s). Precision 80 dmg shot, 380px range", icon: "🎯", color: "#88ff44", category: 'companion', maxLevel: 5,  rarity: 'rare' },
+  companion_mortar:  { name: "Mortar Drone",     desc: "+1 mortar drone (costs 0.9 oil/s). Lobs 50-dmg AoE bombs, 60px blast", icon: "💥", color: "#cc6600", category: 'companion', maxLevel: 5,  rarity: 'rare' },
+
+  // ── NEW BASE CARDS (synergy fodder) ──────────────────────────────────
+  frost_rounds:    { name: "Frost Rounds",   desc: "Bullets slow enemies 30% for 1.5s. Stack: +0.5s freeze duration",   icon: "❄", color: "#88ddff", category: 'firepower', maxLevel: 5, rarity: 'rare' },
+  armor_shred:     { name: "Armor Shred",    desc: "Bullets reduce enemy armor 8% per hit (max 40%). Stack: +2% shred",  icon: "🪓", color: "#cc8844", category: 'firepower', maxLevel: 5, rarity: 'rare' },
+  toxic_rounds:    { name: "Toxic Rounds",   desc: "Bullets apply 3 dmg/s poison for 2s. Stack: +1s poison duration",   icon: "☠", color: "#88ff44", category: 'firepower', maxLevel: 5, rarity: 'rare' },
+  echo_strike:     { name: "Echo Strike",    desc: "Every 3rd bullet fires twice. Stack: -1 trigger count (min 2)",      icon: "〰", color: "#ff88ff", category: 'firepower', maxLevel: 3, rarity: 'legendary' },
+  rampage_amp:     { name: "Rampage Amp",    desc: "During RAMPAGE: +25% dmg & +20% fire rate. Stack: +15% dmg each",   icon: "🔥", color: "#ff6600", category: 'firepower', maxLevel: 3, rarity: 'rare' },
 
   // ── CHAOS CARDS (drawbacks + powerful upsides) ────────────────────────────
   card_blood_tithe: { name: "Blood Tithe",    desc: "+15% dmg per stack. Drawback: -0.4 oil/s drain each stack", icon: "🩸", color: "#cc0044", category: 'chaos', maxLevel: 99, rarity: 'rare' },
@@ -190,6 +201,15 @@ export const UPGRADES = {
   missile_battery:  { name: "MISSILE BATTERY",  desc: "Orbital turrets fire homing missiles. Stack: +20% dmg",        icon: "🛸", color: "#ff8844", category: 'special', maxLevel: 3, synergy: true, requires: ['missile_boost', 'orbital'] },
   inferno_barrage:  { name: "INFERNO BARRAGE",  desc: "Napalm chains to targets. Stack: +20px chain radius",          icon: "🌋", color: "#ff4400", category: 'special', maxLevel: 3, synergy: true, requires: ['spread_shot', 'napalm'] },
   adaptive_plating: { name: "ADAPTIVE PLATING", desc: "Blocked damage restores oil. Stack: +10% more restored",       icon: "💎", color: "#44ffcc", category: 'special', maxLevel: 3, synergy: true, requires: ['armor_plating', 'repair'] },
+
+  // ── NEW SYNERGIES (Phase 2 — insane combos) ──────────────────────────────
+  cryo_nova:      { name: "CRYO NOVA",       desc: "Oil Nova freezes enemies for 2s. Stack: +0.5s freeze duration",      icon: "🌨", color: "#88ddff", category: 'special', maxLevel: 3, synergy: true, requires: ['frost_rounds', 'oil_nova'] },
+  shatter_strike: { name: "SHATTER STRIKE",  desc: "Frozen enemies take +80% bullet damage. Stack: +30% bonus",          icon: "💠", color: "#00ddff", category: 'special', maxLevel: 3, synergy: true, requires: ['frost_rounds', 'high_caliber'] },
+  poison_field:   { name: "POISON FIELD",    desc: "Napalm zones also poison (6 dmg/s). Stack: +50% poison damage",      icon: "☣", color: "#66ff44", category: 'special', maxLevel: 3, synergy: true, requires: ['toxic_rounds', 'napalm'] },
+  echo_chain:     { name: "ECHO CHAIN",      desc: "Echo shots arc chain lightning. Stack: +1 chain target per echo",    icon: "⚡", color: "#ffaaff", category: 'special', maxLevel: 3, synergy: true, requires: ['echo_strike', 'chain_lightning'] },
+  toxic_shred:    { name: "TOXIC SHRED",     desc: "Poisoned enemies have -15% extra armor. Stack: +5% armor penalty",   icon: "🧪", color: "#aaff44", category: 'special', maxLevel: 3, synergy: true, requires: ['toxic_rounds', 'armor_shred'] },
+  frost_echo:     { name: "FROST ECHO",      desc: "Echo shots leave frost zones slowing 2s. Stack: +1s slow duration",  icon: "❄", color: "#88ffee", category: 'special', maxLevel: 3, synergy: true, requires: ['echo_strike', 'frost_rounds'] },
+  rampage_nova:   { name: "RAMPAGE NOVA",    desc: "RAMPAGE kills explode 60px AoE. Stack: +20px blast radius",          icon: "💢", color: "#ff4400", category: 'special', maxLevel: 3, synergy: true, requires: ['rampage_amp', 'explosive_rounds'] },
 
   // ── EXPANDED SYNERGIES (Phase 1 update) ──────────────────────────────────
   chain_reaction:   { name: "CHAIN REACTION",   desc: "Explosions arc lightning. Stack: +1 chain target",       icon: "⚡", color: "#88ffff", category: 'special', maxLevel: 3, synergy: true, requires: ['explosive_rounds', 'chain_lightning'] },
