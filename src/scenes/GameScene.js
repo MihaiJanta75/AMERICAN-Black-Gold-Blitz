@@ -515,20 +515,27 @@ export default class GameScene extends Phaser.Scene {
     updateWrecks(s, dt, soundFn);
     updateLoot(s, dt, soundFn);
 
-    // Particles
+    // Particles — swap-remove is O(1) vs O(n) splice; particles cap at 700 so 140 removes/frame
+    // was costing ~49,000 shift operations; now ~140 ops.
     for (let i = s.particles.length - 1; i >= 0; i--) {
       const p = s.particles[i];
       p.x += p.vx; p.y += p.vy; p.vx *= 0.95; p.vy *= 0.95;
       if (p.type === 'smoke') p.vy -= 0.02;
       p.life -= dt;
-      if (p.life <= 0) s.particles.splice(i, 1);
+      if (p.life <= 0) {
+        s.particles[i] = s.particles[s.particles.length - 1];
+        s.particles.pop();
+      }
     }
 
     // Floating texts
     for (let i = s.floatingTexts.length - 1; i >= 0; i--) {
       s.floatingTexts[i].y -= 30 * dt;
       s.floatingTexts[i].life -= dt;
-      if (s.floatingTexts[i].life <= 0) s.floatingTexts.splice(i, 1);
+      if (s.floatingTexts[i].life <= 0) {
+        s.floatingTexts[i] = s.floatingTexts[s.floatingTexts.length - 1];
+        s.floatingTexts.pop();
+      }
     }
 
     s.shakeAmount *= 0.9;
