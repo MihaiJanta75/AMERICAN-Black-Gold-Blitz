@@ -185,15 +185,21 @@ function spawnNapalmZone(s, x, y) {
 export function updateCombat(s, dt, soundFn) {
   const player = s.player;
 
-  // Safety caps: prevent unbounded array growth that causes late-game slowdowns/crashes
-  if (s.enemyBullets.length > 250) s.enemyBullets.splice(0, s.enemyBullets.length - 250);
+  // Safety caps: prevent unbounded array growth that causes late-game slowdowns/crashes.
+  // Use length truncation (O(1)) instead of front-splice (O(n)) for enemy bullets.
+  if (s.enemyBullets.length > 250) s.enemyBullets.length = 250;
 
   // Napalm zones: tick damage to enemies
   if (s.napalmZones && s.napalmZones.length > 0) {
     for (let ni = s.napalmZones.length - 1; ni >= 0; ni--) {
       const nz = s.napalmZones[ni];
       nz.life -= dt;
-      if (nz.life <= 0) { s.napalmZones.splice(ni, 1); continue; }
+      if (nz.life <= 0) {
+        // swap-remove: O(1) instead of O(n) splice
+        s.napalmZones[ni] = s.napalmZones[s.napalmZones.length - 1];
+        s.napalmZones.pop();
+        continue;
+      }
       nz.tickTimer -= dt;
       if (nz.tickTimer <= 0) {
         nz.tickTimer = 0.4;
@@ -208,13 +214,14 @@ export function updateCombat(s, dt, soundFn) {
             }
           }
         }
-        // Inferno barrage: spread to nearby enemies
+        // Inferno barrage: spread to nearby enemies — avoid allocating a new array each tick
         if (s.upgradeStats.hasInfernoBarrage && Math.random() < 0.4) {
-          const nearby = s.enemies.filter(e => dist(nz, e) < nz.radius * 3 && dist(nz, e) > nz.radius);
-          if (nearby.length > 0) {
-            const target = pickRandom(nearby);
-            spawnNapalmZone(s, target.x, target.y);
+          let target = null;
+          for (const e of s.enemies) {
+            const d = dist(nz, e);
+            if (d < nz.radius * 3 && d > nz.radius) { target = e; break; }
           }
+          if (target) spawnNapalmZone(s, target.x, target.y);
         }
       }
     }
@@ -504,7 +511,7 @@ export function updateCombat(s, dt, soundFn) {
       }
     }
 
-    s.enemies.splice(i, 1);
+    s.enemies[i] = s.enemies[s.enemies.length - 1]; s.enemies.pop();
   }
 
   // Player bullets
@@ -524,11 +531,13 @@ export function updateCombat(s, dt, soundFn) {
         b.y = b.y < 0 ? 1 : WORLD_H - 1;
         b.bouncesLeft = (b.bouncesLeft || 0) - 1;
       }
-      if ((b.bouncesLeft || 0) < 0) { s.bullets.splice(i, 1); continue; }
+      if ((b.bouncesLeft || 0) < 0) {
+        s.bullets[i] = s.bullets[s.bullets.length - 1]; s.bullets.pop(); continue;
+      }
     }
 
     if (b.life <= 0 || b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H) {
-      s.bullets.splice(i, 1); continue;
+      s.bullets[i] = s.bullets[s.bullets.length - 1]; s.bullets.pop(); continue;
     }
 
     // Volatile: 10% chance per frame to explode, dealing AoE
@@ -547,7 +556,10 @@ export function updateCombat(s, dt, soundFn) {
       // Shield bubble: bullet absorbed, no damage
       if (e.shieldBubble && dist(b, e) < e.radius + 18) {
         spawnExplosion(s, b.x, b.y, '#aa44ff', 4);
-        if (b.pierce <= 0) { s.bullets.splice(i, 1); hitSomething = true; break; }
+        if (b.pierce <= 0) {
+          s.bullets[i] = s.bullets[s.bullets.length - 1]; s.bullets.pop();
+          hitSomething = true; break;
+        }
         else { b.pierce--; b.damage *= 0.7; }
       }
       if (dist(b, e) < e.radius + 6) {
@@ -582,7 +594,8 @@ export function updateCombat(s, dt, soundFn) {
           addShake(s, b.isGrenade ? 4 : 3);
           // AoE can splash the player too
           if (dist(b, player) < aoeR * 0.5 && player.invincible <= 0) damagePlayer(s, hitDmg * 0.3, soundFn);
-          s.bullets.splice(i, 1); hitSomething = true;
+          s.bullets[i] = s.bullets[s.bullets.length - 1]; s.bullets.pop();
+          hitSomething = true;
           break;
         }
 
@@ -597,7 +610,7 @@ export function updateCombat(s, dt, soundFn) {
           if (s.time - s.lastCritSoundTime > 0.15) { soundFn('explosion', 0.15); s.lastCritSoundTime = s.time; }
           // Overkill synergy: crits split into 2 extra piercing bullets
           if (s.upgradeStats.hasOverkill) {
-            for (let sp = 0; sp < 2; sp++) {
+            for (let sp = 0; sp < 2 && s.bullets.length < 200; sp++) {
               const splitA = b.angle !== undefined ? b.angle + (sp === 0 ? 0.35 : -0.35) :
                 Math.atan2(b.vy, b.vx) + (sp === 0 ? 0.35 : -0.35);
               const bspd = Math.hypot(b.vx, b.vy);
@@ -649,9 +662,11 @@ export function updateCombat(s, dt, soundFn) {
           const period = s.upgradeStats.echoStrikePeriod || 3;
           if (s.upgradeStats.echoStrikeCount >= period) {
             s.upgradeStats.echoStrikeCount = 0;
-            // Fire a duplicate bullet in same direction
-            const echoB = { x: b.x, y: b.y, vx: b.vx, vy: b.vy, life: 0.6, damage: b.damage * 0.8, pierce: b.pierce || 0, crit: false };
-            s.bullets.push(echoB);
+            // Fire a duplicate bullet in same direction (cap to avoid infinite echo chains)
+            if (s.bullets.length < 200) {
+              const echoB = { x: b.x, y: b.y, vx: b.vx, vy: b.vy, life: 0.6, damage: b.damage * 0.8, pierce: b.pierce || 0, crit: false };
+              s.bullets.push(echoB);
+            }
             spawnParticle(s, b.x, b.y, 0, 0, 0.2, 6, '#ff88ff', 'circle');
             // Echo Chain synergy: echo shot also arcs chain lightning
             if (s.upgradeStats.hasEchoChain) {
@@ -735,7 +750,10 @@ export function updateCombat(s, dt, soundFn) {
         }
 
         if (b.pierce > 0) { b.pierce--; b.damage *= 0.7; }
-        else { s.bullets.splice(i, 1); hitSomething = true; break; }
+        else {
+          s.bullets[i] = s.bullets[s.bullets.length - 1]; s.bullets.pop();
+          hitSomething = true; break;
+        }
       }
     }
     if (hitSomething) continue;
@@ -745,7 +763,11 @@ export function updateCombat(s, dt, soundFn) {
   for (let i = s.homingMissiles.length - 1; i >= 0; i--) {
     const m = s.homingMissiles[i];
     m.life -= dt;
-    if (m.life <= 0) { spawnExplosion(s, m.x, m.y, '#ff6600', 8); s.homingMissiles.splice(i, 1); continue; }
+    if (m.life <= 0) {
+      spawnExplosion(s, m.x, m.y, '#ff6600', 8);
+      s.homingMissiles[i] = s.homingMissiles[s.homingMissiles.length - 1]; s.homingMissiles.pop();
+      continue;
+    }
 
     if (m.target && m.target.hp > 0) {
       const desired = Math.atan2(m.target.y - m.y, m.target.x - m.x);
@@ -797,7 +819,7 @@ export function updateCombat(s, dt, soundFn) {
           soundFn('explosion', 0.4);
           if (s.upgradeStats.hasNapalm) spawnNapalmZone(s, m.x, m.y);
         }
-        s.homingMissiles.splice(i, 1);
+        s.homingMissiles[i] = s.homingMissiles[s.homingMissiles.length - 1]; s.homingMissiles.pop();
         break;
       }
     }
@@ -807,10 +829,13 @@ export function updateCombat(s, dt, soundFn) {
   for (let i = s.enemyBullets.length - 1; i >= 0; i--) {
     const b = s.enemyBullets[i];
     b.x += b.vx; b.y += b.vy; b.life -= dt;
-    if (b.life <= 0) { s.enemyBullets.splice(i, 1); continue; }
+    if (b.life <= 0) {
+      s.enemyBullets[i] = s.enemyBullets[s.enemyBullets.length - 1]; s.enemyBullets.pop();
+      continue;
+    }
     if (dist(b, player) < 18 && player.invincible <= 0) {
       damagePlayer(s, b.damage, soundFn);
-      s.enemyBullets.splice(i, 1);
+      s.enemyBullets[i] = s.enemyBullets[s.enemyBullets.length - 1]; s.enemyBullets.pop();
     }
   }
 
@@ -853,13 +878,15 @@ export function updateEvents(s, dt, soundFn) {
       ev.data.oilTimer -= dt;
       if (ev.data.oilTimer <= 0) {
         ev.data.oilTimer = GEYSER_OIL_RATE;
-        const oilAmt = Math.floor(rand(8, 18) * (s.milestoneUnlocks?.opportunist ? (s.upgradeStats.opportunistMult || 1.4) : 1));
-        s.loot.push({
-          color: '#222', glow: '#555', radius: 6, value: oilAmt, type: 'oil',
-          x: ev.data.x + rand(-GEYSER_RADIUS * 0.5, GEYSER_RADIUS * 0.5),
-          y: ev.data.y + rand(-GEYSER_RADIUS * 0.5, GEYSER_RADIUS * 0.5),
-          life: 8, bobPhase: Math.random() * Math.PI * 2,
-        });
+        if (s.loot.length < LOOT_MAX) { // respect loot cap — geyser was previously uncapped
+          const oilAmt = Math.floor(rand(8, 18) * (s.milestoneUnlocks?.opportunist ? (s.upgradeStats.opportunistMult || 1.4) : 1));
+          s.loot.push({
+            color: '#222', glow: '#555', radius: 6, value: oilAmt, type: 'oil',
+            x: ev.data.x + rand(-GEYSER_RADIUS * 0.5, GEYSER_RADIUS * 0.5),
+            y: ev.data.y + rand(-GEYSER_RADIUS * 0.5, GEYSER_RADIUS * 0.5),
+            life: 8, bobPhase: Math.random() * Math.PI * 2,
+          });
+        }
       }
     }
 
@@ -919,14 +946,17 @@ export function updateWrecks(s, dt, soundFn) {
   for (let i = s.wrecks.length - 1; i >= 0; i--) {
     const w = s.wrecks[i];
     w.life -= dt;
-    if (w.life <= 0) { s.wrecks.splice(i, 1); continue; }
+    if (w.life <= 0) {
+      s.wrecks[i] = s.wrecks[s.wrecks.length - 1]; s.wrecks.pop();
+      continue;
+    }
     if (dist(w, s.player) < WRECK_COLLECT_RADIUS) {
       const mult = s.milestoneUnlocks?.salvager ? (s.upgradeStats.salvagerMult || 1.5) : 1.0;
       const oilGain = Math.floor(w.oil * mult);
       s.player.oil = Math.min(getMaxOil(s), s.player.oil + oilGain);
       spawnFloatingText(s, w.x, w.y - 12, '+' + oilGain + ' SALVAGE', '#88aacc', 11);
       soundFn('pickup', 0.1);
-      s.wrecks.splice(i, 1);
+      s.wrecks[i] = s.wrecks[s.wrecks.length - 1]; s.wrecks.pop();
     }
   }
 }
@@ -1075,6 +1105,8 @@ export function updateRigs(s, dt) {
   }
 
   // ── Per-rig logic ────────────────────────────────────────────────────────
+  // Cache playerRigCount once — used in income calc, avoids O(n) filter inside O(n) loop
+  const playerRigCount = s.rigs.filter(r => r.owner === 'player').length;
   for (let ri = s.rigs.length - 1; ri >= 0; ri--) {
     const rig = s.rigs[ri];
 
@@ -1091,14 +1123,18 @@ export function updateRigs(s, dt) {
         spawnFloatingText(s, rig.x, rig.y - 25, '+' + rig.burnoutOil + ' SALVAGE', '#88aacc', 13);
         rig.burnoutOil = 0;
       }
-      if (rig.burnoutTimer <= 0) { s.rigs.splice(ri, 1); }
+      if (rig.burnoutTimer <= 0) {
+        s.rigs[ri] = s.rigs[s.rigs.length - 1]; s.rigs.pop();
+      }
       continue;
     }
 
     // ── Depleted field ───────────────────────────────────────────────────
     if (rig.owner === 'depleted') {
       rig.depleteTimer -= dt;
-      if (rig.depleteTimer <= 0) { s.rigs.splice(ri, 1); }
+      if (rig.depleteTimer <= 0) {
+        s.rigs[ri] = s.rigs[s.rigs.length - 1]; s.rigs.pop();
+      }
       continue;
     }
 
@@ -1127,7 +1163,6 @@ export function updateRigs(s, dt) {
     }
 
     if (rig.owner === 'player') {
-      const playerRigCount = s.rigs.filter(r => r.owner === 'player').length;
       const warEcoMult = (s.milestoneUnlocks?.war_economy && playerRigCount >= 3) ? (1 + (s.upgradeStats.warEconomyBonus || 0.30)) : 1.0;
       const marketMult = s.oilMarket?.mult || 1.0;
       const pipeMult   = rig.pipelineIncome || 1.0;
@@ -1230,7 +1265,10 @@ export function updateLoot(s, dt, soundFn) {
     const l = s.loot[i];
     l.life -= dt;
     l.bobPhase += dt * 3;
-    if (l.life <= 0) { s.loot.splice(i, 1); continue; }
+    if (l.life <= 0) {
+      s.loot[i] = s.loot[s.loot.length - 1]; s.loot.pop();
+      continue;
+    }
     const d = dist(l, player);
     if (d < magnetR && d > pickR) {
       const a = angle(l, player);
@@ -1255,7 +1293,7 @@ export function updateLoot(s, dt, soundFn) {
         soundFn('powerup', 0.3);
         addScreenFlash(s, l.color, 0.12);
       }
-      s.loot.splice(i, 1);
+      s.loot[i] = s.loot[s.loot.length - 1]; s.loot.pop();
     }
   }
 }

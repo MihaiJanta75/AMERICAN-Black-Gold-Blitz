@@ -286,7 +286,7 @@ export function updatePlayer(s, dt, soundFn) {
         // Missile battery synergy: orbital fires homing missiles
         if (Math.random() < dt * 0.6) {
           const target = findNearestEnemy(s, { x: ox, y: oy });
-          if (target && dist({ x: ox, y: oy }, target) < 350) {
+          if (target && dist({ x: ox, y: oy }, target) < 350 && s.homingMissiles.length < HOMING_MISSILE_CAP) {
             s.homingMissiles.push({
               x: ox, y: oy,
               angle: Math.atan2(target.y - oy, target.x - ox),
@@ -301,7 +301,7 @@ export function updatePlayer(s, dt, soundFn) {
         // Normal orbital bullet
         if (Math.random() < dt * 3) {
           const target = findNearestEnemy(s, { x: ox, y: oy });
-          if (target && dist({ x: ox, y: oy }, target) < 320) {
+          if (target && dist({ x: ox, y: oy }, target) < 320 && s.bullets.length < BULLET_CAP) {
             const ta = angle({ x: ox, y: oy }, target);
             s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta) * 8, vy: Math.sin(ta) * 8, life: 1, damage: 10, crit: false, pierce: 0 });
           }
@@ -323,6 +323,7 @@ export function updatePlayer(s, dt, soundFn) {
       const target = findNearestEnemy(s, rig);
       if (target && dist(rig, target) < FORTIFY_TURRET_RANGE) {
         for (let t = 0; t < s.upgradeStats.fortifyTurretCount; t++) {
+          if (s.bullets.length >= BULLET_CAP) break;
           const ta = angle(rig, target) + (t === 0 ? 0 : rand(-0.15, 0.15));
           s.bullets.push({ x: rig.x, y: rig.y, vx: Math.cos(ta) * 9, vy: Math.sin(ta) * 9, life: 1.2, damage: 20, crit: false, pierce: 0 });
         }
@@ -459,6 +460,7 @@ function fireBullet(s, soundFn) {
     case 'rocket': {
       // 3 rockets in fan with AoE explosion flag
       for (let rk = 0; rk < 3; rk++) {
+        if (s.bullets.length >= BULLET_CAP) break;
         const ra = p.angle + (rk - 1) * 0.20;
         const isCrit = Math.random() < critChance;
         s.bullets.push({ x: p.x, y: p.y, vx: Math.cos(ra)*bSpeed*0.9, vy: Math.sin(ra)*bSpeed*0.9, life: 2.2, damage: bDmg*(isCrit?critMult:1), crit: isCrit, pierce: 0, isRocket: true, rocketRadius: 40 });
@@ -547,8 +549,16 @@ function fireBullet(s, soundFn) {
   soundFn('shoot');
 }
 
+/* Hard cap on simultaneous player bullets — prevents late-game array explosion
+   from rapid-fire weapons + overkill splits + echo-chain multiplying bullets. */
+const BULLET_CAP = 200;
+/* Hard cap on simultaneous homing missiles (orbitals + companion drones can
+   spawn many per second; each runs a full O(n) enemy scan every frame). */
+const HOMING_MISSILE_CAP = 20;
+
 /* Raw bullet spawner — handles volatile rounds, cursed mag, resonance */
 function spawnBulletRaw(s, x, y, a, sp, dmg, isCrit, life, pierce) {
+  if (s.bullets.length >= BULLET_CAP) return; // safety cap — drop bullet rather than freeze
   // Cursed magazine (cycle shortens with stacks)
   if (s.upgradeStats.cursedMagActive) {
     s.upgradeStats.cursedMagCounter = ((s.upgradeStats.cursedMagCounter||0) + 1);
@@ -670,7 +680,7 @@ function updateCompanions(s, dt, p, soundFn) {
     const oy = p.y + Math.sin(oa) * 55;
     if (Math.random() < dt * 2.5) {
       const target = findNearestEnemy(s, { x: ox, y: oy });
-      if (target && dist({ x: ox, y: oy }, target) < 280) {
+      if (target && dist({ x: ox, y: oy }, target) < 280 && s.bullets.length < BULLET_CAP) {
         const ta = angle({ x: ox, y: oy }, target);
         s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta)*9, vy: Math.sin(ta)*9, life: 1, damage: 15, crit: false, pierce: 0 });
       }
@@ -686,7 +696,7 @@ function updateCompanions(s, dt, p, soundFn) {
     const oy = p.y + Math.sin(oa) * 60;
     if (Math.random() < dt * 1.0) {
       const target = findNearestEnemy(s, { x: ox, y: oy });
-      if (target && dist({ x: ox, y: oy }, target) < 320) {
+      if (target && dist({ x: ox, y: oy }, target) < 320 && s.homingMissiles.length < HOMING_MISSILE_CAP) {
         s.homingMissiles.push({ x: ox, y: oy, angle: angle({ x: ox, y: oy }, target),
           speed: HOMING_SPEED * 1.2, target, life: 2, damage: 30 });
       }
@@ -718,8 +728,7 @@ function updateCompanions(s, dt, p, soundFn) {
       const ox = p.x + Math.cos(oa) * 70;
       const oy = p.y + Math.sin(oa) * 70;
       const target = findNearestEnemy(s, { x: ox, y: oy });
-      if (target && dist({ x: ox, y: oy }, target) < 350) {
-        // Drop bomb — stored as a special bullet with isRocket flag for AoE
+      if (target && dist({ x: ox, y: oy }, target) < 350 && s.bullets.length < BULLET_CAP) {
         s.bullets.push({ x: ox, y: oy, vx: Math.cos(angle({ x: ox, y: oy }, target))*3, vy: Math.sin(angle({ x: ox, y: oy }, target))*3, life: 1.5, damage: 40, crit: false, pierce: 0, isRocket: true, rocketRadius: 60 });
       }
       us.bomberDroneTimers[i] = 3.5; // fires every 3.5s
@@ -738,9 +747,8 @@ function updateCompanions(s, dt, p, soundFn) {
     const oy = p.y + Math.sin(oa) * 78;
     if (us.gunshipTimers[i] <= 0) {
       const target = findNearestEnemy(s, { x: ox, y: oy });
-      if (target && dist({ x: ox, y: oy }, target) < 300) {
+      if (target && dist({ x: ox, y: oy }, target) < 300 && s.bullets.length < BULLET_CAP) {
         const ta = angle({ x: ox, y: oy }, target);
-        // Triple burst: 3 bullets in a tight fan
         for (let b = -1; b <= 1; b++) {
           const ba = ta + b * 0.12;
           s.bullets.push({ x: ox, y: oy, vx: Math.cos(ba)*10, vy: Math.sin(ba)*10, life: 0.9, damage: 25, crit: false, pierce: 0 });
@@ -762,7 +770,7 @@ function updateCompanions(s, dt, p, soundFn) {
     const oy = p.y + Math.sin(oa) * 90;
     if (us.fighterTimers[i] <= 0) {
       const target = findNearestEnemy(s, { x: ox, y: oy });
-      if (target && dist({ x: ox, y: oy }, target) < 360) {
+      if (target && dist({ x: ox, y: oy }, target) < 360 && s.bullets.length < BULLET_CAP) {
         const ta = angle({ x: ox, y: oy }, target);
         // Strafing run: 5 bullets spread slightly
         for (let b = 0; b < 5; b++) {
@@ -787,7 +795,7 @@ function updateCompanions(s, dt, p, soundFn) {
     const oy = p.y + Math.sin(oa) * 65;
     if (us.sniperTimers[i] <= 0) {
       const target = findNearestEnemy(s, { x: ox, y: oy });
-      if (target && dist({ x: ox, y: oy }, target) < 380) {
+      if (target && dist({ x: ox, y: oy }, target) < 380 && s.bullets.length < BULLET_CAP) {
         const ta = angle({ x: ox, y: oy }, target);
         s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta)*16, vy: Math.sin(ta)*16, life: 0.8, damage: 80, crit: false, pierce: 2 });
       }
@@ -807,7 +815,7 @@ function updateCompanions(s, dt, p, soundFn) {
     const oy = p.y + Math.sin(oa) * 75;
     if (us.mortarTimers[i] <= 0) {
       const target = findNearestEnemy(s, { x: ox, y: oy });
-      if (target && dist({ x: ox, y: oy }, target) < 300) {
+      if (target && dist({ x: ox, y: oy }, target) < 300 && s.bullets.length < BULLET_CAP) {
         const ta = angle({ x: ox, y: oy }, target);
         const spd = 4;
         s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta)*spd, vy: Math.sin(ta)*spd, life: 2.2, damage: 50, crit: false, pierce: 0, isRocket: true, rocketRadius: 60 });
@@ -829,6 +837,7 @@ export function findNearestEnemy(s, from) {
 
 function fireHoming(s, soundFn) {
   const p = s.player;
+  if (s.homingMissiles.length >= HOMING_MISSILE_CAP) return false; // safety cap
   if (p.oil < OIL_COST_PER_MISSILE) return false;
   const target = findNearestEnemy(s, p);
   if (!target) return false;
