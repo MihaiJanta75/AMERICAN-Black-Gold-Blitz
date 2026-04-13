@@ -312,6 +312,7 @@ export function spawnLevelUpEffect(s, x, y) {
 }
 
 export function spawnFloatingText(s, x, y, text, color, size) {
+  if (s.floatingTexts.length >= 50) s.floatingTexts.splice(0, 1);
   s.floatingTexts.push({ x, y, text, color, life: 1.5, maxLife: 1.5, size: size || 13 });
 }
 
