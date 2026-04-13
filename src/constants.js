@@ -102,6 +102,9 @@ export const BLACK_HOLE_DAMAGE = 20;
 export const BLACK_HOLE_COOLDOWN = 18;
 
 
+/* ===== UPGRADE SCREEN ===== */
+export const UPGRADE_SCREEN_GRACE_MS = 500;  // ms to ignore taps after upgrade screen opens
+
 /* ===== MILESTONES ===== */
 export const MILESTONE_INTERVAL = 500;
 

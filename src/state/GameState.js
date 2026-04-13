@@ -65,6 +65,7 @@ export const state = {
   upgradeLevels: {},
   upgradeChoices: [],
   pendingUpgradeCard: null,   // key of card awaiting second-tap confirmation
+  upgradeScreenOpenTime: 0,   // timestamp when upgrade screen last opened (for grace-period)
   totalUpgrades: 0,
   bountyCards: [],       // upgrade keys waiting to be awarded
   isBountyUpgrade: false,
@@ -995,6 +996,7 @@ export function resetGameState(s) {
   s.isBountyUpgrade = false;
   s.upgradeChoices = [];
   s.pendingUpgradeCard = null;
+  s.upgradeScreenOpenTime = 0;
   s.blackHoleCooldown = 0;
   s.timeWarpCooldown = 0;
   s.lastAbilityTime = -99;

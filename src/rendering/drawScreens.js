@@ -1,5 +1,6 @@
 import { FACTIONS, FACTION_KEYS, UPGRADES, MILESTONE_DEFS, UPGRADE_CATEGORIES, MUTATIONS, RARITY_COLORS, RARITY_LABELS } from '../config.js';
 import { getUpgradeCost } from '../state/GameState.js';
+import { UPGRADE_SCREEN_GRACE_MS } from '../constants.js';
 
 export function drawTitle(ctx, s) {
   const { W, H } = s;
@@ -218,6 +219,25 @@ export function drawUpgradeScreen(ctx, s) {
   ctx.fillStyle = skipHover ? '#ffcc66' : '#886644';
   ctx.font = 'bold ' + Math.min(12, W * 0.022) + 'px monospace'; ctx.textAlign = 'center';
   ctx.fillText('SKIP — KEEP OIL', skipX + skipW / 2, skipY + skipH / 2 + 5);
+
+  // Grace-period overlay: briefly dim and show a "LIFT YOUR FINGERS" notice so the
+  // player doesn't accidentally select a card immediately after the screen appears.
+  const elapsed = s.upgradeScreenOpenTime ? Date.now() - s.upgradeScreenOpenTime : UPGRADE_SCREEN_GRACE_MS;
+  if (elapsed < UPGRADE_SCREEN_GRACE_MS) {
+    const progress = elapsed / UPGRADE_SCREEN_GRACE_MS; // 0 → 1
+    const alpha = 0.72 * (1 - progress);
+    ctx.fillStyle = `rgba(0,0,10,${alpha.toFixed(3)})`;
+    ctx.fillRect(0, 0, W, H);
+    // Pulsing "LIFT YOUR FINGERS" label
+    const labelAlpha = 1 - progress * 0.4;
+    ctx.globalAlpha = labelAlpha;
+    const fontSize = Math.min(20, W * 0.038);
+    ctx.font = 'bold ' + fontSize + 'px monospace';
+    ctx.fillStyle = '#ffcc00';
+    ctx.textAlign = 'center';
+    ctx.fillText(s.isTouchDevice ? '✋ LIFT YOUR FINGERS ✋' : '— PICK A CARD —', W / 2, H / 2);
+    ctx.globalAlpha = 1;
+  }
 }
 
 function wrapText(ctx, text, x, y, maxWidth, lineH) {
