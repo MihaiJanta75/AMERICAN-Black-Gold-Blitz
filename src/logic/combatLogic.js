@@ -16,12 +16,13 @@ import {
   RIG_SPAWN_INTERVAL, AI_UPGRADE_INTERVAL, OIL_OVERFLOW_DRAIN,
   TERRITORY_CLUSTER_RANGE, TERRITORY_BONUS_PER_NEIGHBOR,
   GOLD_RIG_INTERVAL, GOLD_RIG_INCOME_MULT, CURSED_RIG_CHANCE, CURSED_RIG_INCOME_MULT,
+  CLUSTER_UPDATE_INTERVAL,
 } from '../constants.js';
 import { dist, angle, clamp, rand } from '../utils.js';
 import { FACTIONS, LOOT_TYPES } from '../config.js';
 import {
   getMaxOil, getBodyDamage, getPickupRadius, hasPowerup, addPowerup,
-  spawnExplosion, spawnOilSpill, spawnFloatingText,
+  spawnExplosion, spawnOilSpill, spawnFloatingText, spawnParticle,
   addShake, addScreenFlash, registerKill, addXP, getHealthRegen,
   spawnRig,
 } from '../state/GameState.js';
@@ -171,8 +172,11 @@ function applyChainLightning(s, hitX, hitY, initialDamage, excludeIdx) {
 }
 
 /* ===== NAPALM ZONE SPAWN ===== */
+// Hard cap prevents inferno-barrage from spawning zones exponentially
+const NAPALM_ZONE_MAX = 8;
 function spawnNapalmZone(s, x, y) {
   if (!s.napalmZones) s.napalmZones = [];
+  if (s.napalmZones.length >= NAPALM_ZONE_MAX) return;
   const dps = NAPALM_DPS * (s.upgradeStats.napalmDpsMult || 1);
   s.napalmZones.push({ x, y, radius: NAPALM_RADIUS, dps, life: NAPALM_DURATION, maxLife: NAPALM_DURATION, tickTimer: 0 });
 }
@@ -180,6 +184,9 @@ function spawnNapalmZone(s, x, y) {
 /* ===== COMBAT UPDATE ===== */
 export function updateCombat(s, dt, soundFn) {
   const player = s.player;
+
+  // Safety caps: prevent unbounded array growth that causes late-game slowdowns/crashes
+  if (s.enemyBullets.length > 250) s.enemyBullets.splice(0, s.enemyBullets.length - 250);
 
   // Napalm zones: tick damage to enemies
   if (s.napalmZones && s.napalmZones.length > 0) {
@@ -756,7 +763,7 @@ export function updateCombat(s, dt, soundFn) {
     for (let t = 0; t < 2; t++) {
       const tx = m.x - Math.cos(m.angle) * (6 + t * 4);
       const ty = m.y - Math.sin(m.angle) * (6 + t * 4);
-      s.particles.push({ x: tx + rand(-2, 2), y: ty + rand(-2, 2), vx: rand(-0.5, 0.5), vy: rand(-0.5, 0.5), life: rand(0.1, 0.3), maxLife: 0.3, r: rand(2, 4), color: t === 0 ? '#ff6600' : '#ff3300', type: 'fire' });
+      spawnParticle(s, tx + rand(-2, 2), ty + rand(-2, 2), rand(-0.5, 0.5), rand(-0.5, 0.5), rand(0.1, 0.3), rand(2, 4), t === 0 ? '#ff6600' : '#ff3300', 'fire');
     }
 
     for (let j = s.enemies.length - 1; j >= 0; j--) {
@@ -1046,20 +1053,24 @@ export function updateRigs(s, dt) {
     s.aiUpgradeTimer = AI_UPGRADE_INTERVAL;
   }
 
-  // ── Territory cluster counting (player rigs only) ────────────────────────
-  const activePlayerRigs = s.rigs.filter(r => r.owner === 'player' && r.hp > 0);
-  for (const rig of activePlayerRigs) {
-    const prev = rig.clusterCount || 0;
-    rig.clusterCount = 0;
-    for (const other of activePlayerRigs) {
-      if (other === rig) continue;
-      if (Math.hypot(rig.x - other.x, rig.y - other.y) <= TERRITORY_CLUSTER_RANGE) {
-        rig.clusterCount++;
+  // ── Territory cluster counting (player rigs only) — throttled to 2×/s ──
+  s._clusterTimer = (s._clusterTimer || 0) - dt;
+  if (s._clusterTimer <= 0) {
+    s._clusterTimer = CLUSTER_UPDATE_INTERVAL;
+    const activePlayerRigs = s.rigs.filter(r => r.owner === 'player' && r.hp > 0);
+    for (const rig of activePlayerRigs) {
+      const prev = rig.clusterCount || 0;
+      rig.clusterCount = 0;
+      for (const other of activePlayerRigs) {
+        if (other === rig) continue;
+        if (Math.hypot(rig.x - other.x, rig.y - other.y) <= TERRITORY_CLUSTER_RANGE) {
+          rig.clusterCount++;
+        }
       }
-    }
-    // First-time cluster event: announce to player
-    if (prev === 0 && rig.clusterCount > 0) {
-      spawnFloatingText(s, rig.x, rig.y - 44, '⬡ CLUSTER BONUS ACTIVE!', '#44ff88', 13);
+      // First-time cluster event: announce to player
+      if (prev === 0 && rig.clusterCount > 0) {
+        spawnFloatingText(s, rig.x, rig.y - 44, '⬡ CLUSTER BONUS ACTIVE!', '#44ff88', 13);
+      }
     }
   }
 
@@ -1180,18 +1191,21 @@ export function updateRigs(s, dt) {
 }
 
 /* ===== LOOT ===== */
+const LOOT_MAX = 80;
 function spawnLoot(s, x, y, enemy) {
   const xpType = enemy.scoreValue >= 150 ? 'xp_large' : enemy.scoreValue >= 100 ? 'xp_medium' : 'xp_small';
-  const a1 = Math.random() * Math.PI * 2;
-  s.loot.push({ ...LOOT_TYPES[xpType], x: x + Math.cos(a1) * 8, y: y + Math.sin(a1) * 8, life: 15, bobPhase: Math.random() * Math.PI * 2 });
+  if (s.loot.length < LOOT_MAX) {
+    const a1 = Math.random() * Math.PI * 2;
+    s.loot.push({ ...LOOT_TYPES[xpType], x: x + Math.cos(a1) * 8, y: y + Math.sin(a1) * 8, life: 15, bobPhase: Math.random() * Math.PI * 2 });
+  }
 
-  if (Math.random() < 0.20) {
+  if (Math.random() < 0.20 && s.loot.length < LOOT_MAX) {
     const ot = Math.random() < 0.3 ? 'oil_large' : 'oil_small';
     const a2 = Math.random() * Math.PI * 2;
     s.loot.push({ ...LOOT_TYPES[ot], x: x + Math.cos(a2) * 12, y: y + Math.sin(a2) * 12, life: 15, bobPhase: Math.random() * Math.PI * 2 });
   }
 
-  if (Math.random() < 0.06) {
+  if (Math.random() < 0.06 && s.loot.length < LOOT_MAX) {
     const types = ['pow_speed', 'pow_damage', 'pow_shield', 'pow_magnet'];
     const pt = pickRandom(types);
     s.loot.push({ ...LOOT_TYPES[pt], x, y, life: 20, bobPhase: Math.random() * Math.PI * 2 });
@@ -1199,6 +1213,7 @@ function spawnLoot(s, x, y, enemy) {
 
   if (enemy.isBoss) {
     for (let i = 0; i < 5; i++) {
+      if (s.loot.length >= LOOT_MAX) break;
       const a3 = Math.random() * Math.PI * 2;
       const r3 = rand(10, 30);
       s.loot.push({ ...LOOT_TYPES['xp_large'], x: x + Math.cos(a3) * r3, y: y + Math.sin(a3) * r3, life: 20, bobPhase: Math.random() * Math.PI * 2 });

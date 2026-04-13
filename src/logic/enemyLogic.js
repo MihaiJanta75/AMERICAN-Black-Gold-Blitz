@@ -7,6 +7,7 @@ import {
   KAMIKAZE_EXPLOSION_RADIUS, KAMIKAZE_DAMAGE, KAMIKAZE_RUSH_RANGE,
   SCOUT_ALERT_DURATION, BOMBER_HP, BOMBER_SPEED,
   RIVALRY_RANGE, RIVALRY_DAMAGE_RATE, RIVALRY_CHECK_INTERVAL,
+  BUFF_UPDATE_INTERVAL, PROPAGATE_ALERT_COOLDOWN,
 } from '../constants.js';
 import { clamp, rand, randInt, dist, angle, lerp, pickRandom } from '../utils.js';
 import { FACTIONS, FACTION_KEYS, TIER_MULTS, FACTION_BY_TIER } from '../config.js';
@@ -692,9 +693,13 @@ export function updateEnemies(s, dt, soundFn) {
   hm.alertTimer = Math.max(0, hm.alertTimer - dt);
   if (hm.alertTimer > 0) hm.alertLevel = Math.max(hm.alertLevel, 0.6);
 
-  // Apply commander buffs and shield drone effects each frame
-  applyCommanderBuffs(s);
-  applyShieldDroneEffect(s);
+  // Apply commander buffs and shield drone effects (throttled to 10×/s — no need for per-frame O(n²) scans)
+  s._buffUpdateTimer = (s._buffUpdateTimer || 0) - dt;
+  if (s._buffUpdateTimer <= 0) {
+    s._buffUpdateTimer = BUFF_UPDATE_INTERVAL;
+    applyCommanderBuffs(s);
+    applyShieldDroneEffect(s);
+  }
   updateFactionRivalry(s, dt);
 
   // Blackout storm event: +30% enemy speed
@@ -1164,7 +1169,11 @@ export function onEnemyHit(s, enemy) {
   s.hiveMind.knownPlayerX = s.player.x;
   s.hiveMind.knownPlayerY = s.player.y;
   s.hiveMind.alertLevel = Math.min(1, s.hiveMind.alertLevel + 0.18);
-  propagateAlert(s, enemy.x, enemy.y, enemy.faction);
+  // Throttle per-enemy propagation: O(n) scan only once per PROPAGATE_ALERT_COOLDOWN per enemy
+  if ((s.time - (enemy._lastPropagateTime || -1)) >= PROPAGATE_ALERT_COOLDOWN) {
+    enemy._lastPropagateTime = s.time;
+    propagateAlert(s, enemy.x, enemy.y, enemy.faction);
+  }
 }
 
 /**

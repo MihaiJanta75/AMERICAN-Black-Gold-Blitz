@@ -130,6 +130,14 @@ export const RIG_BURNOUT_OIL_MAX = 130;
 /* ===== AI UPGRADES ===== */
 export const AI_UPGRADE_INTERVAL = 120;  // seconds between enemy faction upgrades
 
+/* ===== PERFORMANCE THROTTLE INTERVALS ===== */
+/** How often (seconds) commander/shield-drone O(n²) buff scans run (≤10×/s is plenty). */
+export const BUFF_UPDATE_INTERVAL = 0.1;
+/** Minimum seconds between propagateAlert calls for the same enemy to avoid O(n) per bullet hit. */
+export const PROPAGATE_ALERT_COOLDOWN = 0.3;
+/** How often (seconds) the O(n²) territory-cluster count is refreshed (rig positions change slowly). */
+export const CLUSTER_UPDATE_INTERVAL = 0.5;
+
 /* ===== PLAYER UPGRADE ECONOMY ===== */
 export const UPGRADE_OIL_COST_BASE = 50;  // base R&D oil cost for first level of any upgrade
 export const OIL_OVERFLOW_DRAIN = 3;      // oil/s drained when tank is full (over-pressure)
