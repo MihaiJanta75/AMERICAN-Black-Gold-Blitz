@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { removeLoadingScreen } from '../loadingScreen.js';
-import { WORLD_W, WORLD_H, JOYSTICK_RADIUS, DASH_DURATION, DASH_COOLDOWN } from '../constants.js';
+import { WORLD_W, WORLD_H, JOYSTICK_RADIUS, DASH_DURATION, DASH_COOLDOWN, UPGRADE_SCREEN_GRACE_MS } from '../constants.js';
 import { rand, lerp, clamp } from '../utils.js';
 import { UPGRADES, MUTATIONS } from '../config.js';
 import {
@@ -288,13 +288,36 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // Called whenever the upgrade screen is opened to record the open time and clear
+  // any in-flight gameplay touches, preventing accidental card selection on mobile.
+  _openUpgradeScreen() {
+    const s = this.s;
+    s.upgradeScreenOpenTime = Date.now();
+    // Release any active joystick touches so gameplay inputs don't bleed into the UI
+    this._moveTouchId = null;
+    this._aimTouchId = null;
+    s.input.touchMove = { x: 0, y: 0, active: false };
+    s.input.touchAim = { x: 0, y: 0, active: false };
+    s.input.joystickCenter = null;
+    s.input.aimJoystickCenter = null;
+    s.input.touchFire = false;
+    s.input.touchMissile = false;
+  }
+
   handleUpgradeTouchEvent(e) {
+    // Only react to touchstart — ignore touchmove so sliding fingers can't select cards
+    if (e.type !== 'touchstart') return;
     for (const t of e.changedTouches) this.handleUpgradeClick(t.clientX, t.clientY);
   }
 
   handleUpgradeClick(mx, my) {
     const s = this.s;
     if (s.upgradeChoices.length === 0) return;
+
+    // Grace period: ignore taps for the first UPGRADE_SCREEN_GRACE_MS after the screen opens.
+    // This prevents the touch that was active during gameplay from immediately
+    // selecting a card before the player is even aware the screen appeared.
+    if (s.upgradeScreenOpenTime && Date.now() - s.upgradeScreenOpenTime < UPGRADE_SCREEN_GRACE_MS) return;
     const { W, H } = s;
 
     // Skip button — always works on first tap (no confirm needed)
@@ -518,7 +541,7 @@ export default class GameScene extends Phaser.Scene {
     if (s.pendingLevelUp && s.gameState === 'playing') {
       s.pendingLevelUp = false;
       s.upgradeChoices = getUpgradeChoices(s);
-      if (s.upgradeChoices.length > 0) { s.isBountyUpgrade = false; s.pendingUpgradeCard = null; s.gameState = 'upgrade'; }
+      if (s.upgradeChoices.length > 0) { s.isBountyUpgrade = false; s.pendingUpgradeCard = null; s.gameState = 'upgrade'; this._openUpgradeScreen(); }
     }
 
     // Bounty card (from commander kills / supply drops)
@@ -527,6 +550,7 @@ export default class GameScene extends Phaser.Scene {
       s.isBountyUpgrade = true;
       s.pendingUpgradeCard = null;
       s.gameState = 'upgrade';
+      this._openUpgradeScreen();
     }
 
     // Death — phoenix wildcard first, then second_wind milestone
