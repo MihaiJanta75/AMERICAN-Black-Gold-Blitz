@@ -302,6 +302,8 @@ export function updatePlayer(s, dt, soundFn) {
         if (Math.random() < dt * 3) {
           const target = findNearestEnemy(s, { x: ox, y: oy });
           if (target && dist({ x: ox, y: oy }, target) < 320 && s.bullets.length < BULLET_CAP) {
+            const ta = angle({ x: ox, y: oy }, target);
+            s.bullets.push({ x: ox, y: oy, vx: Math.cos(ta) * 8, vy: Math.sin(ta) * 8, life: 1, damage: 10, crit: false, pierce: 0 });
           }
         }
       }
@@ -746,6 +748,7 @@ function updateCompanions(s, dt, p, soundFn) {
     if (us.gunshipTimers[i] <= 0) {
       const target = findNearestEnemy(s, { x: ox, y: oy });
       if (target && dist({ x: ox, y: oy }, target) < 300 && s.bullets.length < BULLET_CAP) {
+        const ta = angle({ x: ox, y: oy }, target);
         for (let b = -1; b <= 1; b++) {
           const ba = ta + b * 0.12;
           s.bullets.push({ x: ox, y: oy, vx: Math.cos(ba)*10, vy: Math.sin(ba)*10, life: 0.9, damage: 25, crit: false, pierce: 0 });
